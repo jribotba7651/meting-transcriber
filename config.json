@@ -2,7 +2,6 @@
   "whisper_model": "base",
   "language": "auto",
   "device": "auto",
-  "buffer_duration": 10,
   "window_opacity": 0.95,
   "always_on_top": true
 }

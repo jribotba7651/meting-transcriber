@@ -1,17 +1,31 @@
-# Meeting Transcriber
+# Meeting Notes Assistant
 
-Real-time meeting transcription application for Windows using OpenAI Whisper.
+Local meeting notes tool for Windows using OpenAI Whisper. Upload audio/video files to transcribe them locally.
+
+> **This application does NOT record audio or video.** It transcribes files that the user voluntarily uploads. All processing is local — no data leaves your machine.
 
 ## Features
 
-- **Real-time audio capture** using WASAPI loopback (captures system audio output)
+- **File upload transcription** — Upload MP4, MKV, AVI, MP3, WAV, M4A, and other formats
 - **Local transcription** using Faster-Whisper (no API keys required)
 - **Multiple model sizes** (tiny, base, small, medium, large)
 - **GPU acceleration** support (CUDA) with automatic CPU fallback
-- **Always-on-top window** for easy monitoring during meetings
+- **Always-on-top window** for easy monitoring
 - **Timestamped transcription** with export to text file
-- **Configurable buffer duration** for optimal performance
-- **No administrator privileges required**
+- **No audio recording** — does not capture system audio or microphone input
+- **No network access** after initial model download
+
+## AI Overlay (Local Assistant)
+
+The `overlay/` directory contains an Electron-based AI assistant overlay:
+
+- **Invisible to screen sharing** — protected from screen capture
+- **Chat with local AI** via Ollama (no cloud APIs)
+- **Screenshot + OCR** — capture on-screen text for notes
+- **Clipboard monitoring** — auto-captures copied text as context
+- **Global hotkeys** — Ctrl+Shift+Space to toggle, Ctrl+Shift+O for OCR
+
+See `overlay/` for setup instructions.
 
 ## System Requirements
 
@@ -25,13 +39,15 @@ Real-time meeting transcription application for Windows using OpenAI Whisper.
 ```
 meeting-transcriber/
 ├── main.py              # Application entry point
-├── audio_capture.py     # WASAPI loopback audio capture
 ├── transcriber.py       # Whisper-based transcription
-├── ui.py                # Tkinter GUI
+├── ui.py                # Tkinter GUI (file upload only)
 ├── config.json          # User configuration
 ├── requirements.txt     # Python dependencies
-├── README.md            # This file
-└── build_instructions.md # Instructions to create .exe
+├── overlay/             # Electron AI assistant overlay
+│   ├── main.js          # Electron main process
+│   ├── services/        # Ollama, OCR, clipboard services
+│   └── renderer/        # Chat UI
+└── README.md            # This file
 ```
 
 ## Configuration
@@ -40,12 +56,11 @@ Edit `config.json` to customize:
 
 ```json
 {
-  "whisper_model": "base",      // tiny, base, small, medium, large
-  "language": "auto",            // auto, en, es, fr, de, etc.
-  "device": "auto",              // auto, cpu, cuda
-  "buffer_duration": 30,         // seconds of audio to buffer before transcribing
-  "window_opacity": 0.95,        // 0.0 (transparent) to 1.0 (opaque)
-  "always_on_top": true          // keep window on top
+  "whisper_model": "base",
+  "language": "auto",
+  "device": "auto",
+  "window_opacity": 0.95,
+  "always_on_top": true
 }
 ```
 
@@ -63,103 +78,20 @@ Edit `config.json` to customize:
 
 ## Usage
 
-### Running from Python
-
-1. Install dependencies (see Installation section below)
-2. Download Whisper models (see Model Download section)
-3. Run: `python main.py`
-
-### Using the Application
-
-1. **Select Audio Device**: Choose your system's loopback device (usually your speakers/headphones)
-2. **Choose Model**: Select Whisper model size based on your needs
-3. **Set Language**: Choose language or leave on "auto" for detection
-4. **Start Recording**: Click "Start Recording" button
-5. **Monitor Transcription**: Text appears in real-time with timestamps
-6. **Save**: Click "Save" to export transcription to .txt file
-
-## Installation Instructions
-
-⚠️ **DO NOT run these commands yet!** Check with your security team first.
-
-### Step 1: Install Python Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-This installs:
-- `faster-whisper` - Optimized Whisper implementation
-- `PyAudioWPatch` - WASAPI loopback audio capture for Windows
-- `numpy` - Array processing
-- `pyinstaller` - For creating standalone .exe
-
-### Step 2: Install CUDA (Optional, for GPU acceleration)
-
-If you have an NVIDIA GPU and want faster transcription:
-
-1. Install [CUDA Toolkit 11.8](https://developer.nvidia.com/cuda-11-8-0-download-archive)
-2. Install cuDNN 8.x for CUDA 11.x
-
-### Step 3: Download Whisper Models
-
-Models are automatically downloaded on first use, but you can pre-download:
-
-```python
-from faster_whisper import WhisperModel
-
-# This will download the model to cache
-model = WhisperModel("base", device="cpu", compute_type="int8")
-```
-
-Default cache location:
-- Windows: `C:\Users\<username>\.cache\huggingface\hub`
-
-## Building Standalone Executable
-
-See `build_instructions.md` for detailed steps to create a portable .exe file.
-
-## Troubleshooting
-
-### No loopback devices found
-
-**Solution**: Windows audio devices must support loopback. Try:
-1. Right-click speaker icon → Sounds → Recording tab
-2. Right-click empty space → Show Disabled Devices
-3. Enable "Stereo Mix" if available
-
-### Audio not capturing
-
-**Possible causes**:
-- Application doesn't have permission to access audio
-- Wrong device selected
-- Audio driver issues
-
-**Solution**: Restart application, try different device, update audio drivers
-
-### Transcription is slow
-
-**Solutions**:
-- Use smaller model (tiny or base)
-- Increase buffer_duration to transcribe less frequently
-- Use GPU if available
-- Close other applications
-
-### Model download fails
-
-**Solution**: Pre-download models manually and place in cache directory.
+1. Install dependencies: `pip install -r requirements.txt`
+2. Run: `python main.py`
+3. Click "Upload Audio/Video" and select a file
+4. Wait for transcription to complete
+5. Click "Save" to export to .txt file
 
 ## Security Notes
 
+- **No audio recording** — this app does not capture system audio, microphone, or any live audio stream
 - **No network access required** after initial model download
-- **All processing is local** - no data sent to external servers
+- **All processing is local** — no data sent to external servers
 - **No administrator privileges** needed
-- **Safe for corporate environments** - uses standard Windows audio APIs
+- **Safe for corporate environments** — does not use WASAPI loopback or any recording APIs
 
 ## License
 
 This is a personal/internal tool. Whisper models are by OpenAI.
-
-## Support
-
-For issues, check logs in console output or contact the developer.

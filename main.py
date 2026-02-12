@@ -1,6 +1,6 @@
 """
-Meeting Transcriber - Main Entry Point
-Real-time meeting transcription using Whisper
+Meeting Notes Assistant - Main Entry Point
+Transcribe uploaded audio/video files using Whisper (no audio recording)
 """
 
 import os
@@ -11,7 +11,6 @@ import logging
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from audio_capture import AudioCapture
 from transcriber import Transcriber
 from ui import TranscriberUI
 
@@ -31,7 +30,6 @@ def load_config():
         "whisper_model": "base",
         "language": "auto",
         "device": "auto",
-        "buffer_duration": 30,
         "window_opacity": 0.95,
         "always_on_top": True
     }
@@ -65,20 +63,13 @@ def save_config(config):
 def main():
     """Main application entry point"""
     logger.info("=" * 60)
-    logger.info("Meeting Transcriber")
+    logger.info("Meeting Notes Assistant")
     logger.info("=" * 60)
 
     # Load configuration
     config = load_config()
 
-    # Initialize components
-    logger.info("Initializing audio capture...")
-    audio_capture = AudioCapture(
-        sample_rate=16000,
-        chunk_size=1024,
-        buffer_duration=config['buffer_duration']
-    )
-
+    # Initialize transcriber
     logger.info("Initializing transcriber...")
     transcriber = Transcriber(
         model_size=config['whisper_model'],
@@ -88,7 +79,7 @@ def main():
 
     # Create and run UI
     logger.info("Starting UI...")
-    app = TranscriberUI(audio_capture, transcriber, config)
+    app = TranscriberUI(transcriber, config)
 
     try:
         app.run()
@@ -97,8 +88,6 @@ def main():
     except Exception as e:
         logger.error(f"Application error: {e}", exc_info=True)
     finally:
-        logger.info("Cleaning up...")
-        audio_capture.cleanup()
         logger.info("Goodbye!")
 
 
