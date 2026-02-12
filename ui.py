@@ -30,6 +30,11 @@ class TranscriberUI:
         self.root = tk.Tk()
         self.root.title("Meeting Transcriber")
 
+        # Set window icon
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icon.ico')
+        if os.path.exists(icon_path):
+            self.root.iconbitmap(icon_path)
+
         # State
         self.is_recording = False
         self.transcription_segments = []
@@ -144,6 +149,10 @@ class TranscriberUI:
         save_btn = ttk.Button(button_frame, text="Save", command=self._save_transcription)
         save_btn.pack(side=tk.LEFT, padx=(0, 5))
 
+        # Upload Video button
+        self.upload_btn = ttk.Button(button_frame, text="Upload Video", command=self._upload_video)
+        self.upload_btn.pack(side=tk.LEFT, padx=(0, 5))
+
         # Always on top checkbox
         self.always_on_top_var = tk.BooleanVar(value=self.config.get('always_on_top', True))
         always_on_top_cb = ttk.Checkbutton(
@@ -170,6 +179,13 @@ class TranscriberUI:
 
     def _populate_devices(self):
         """Populate audio device dropdown"""
+        # Re-initialize PyAudio to detect newly connected devices
+        try:
+            self.audio_capture.audio.terminate()
+            self.audio_capture.audio = __import__('pyaudiowpatch').PyAudio()
+        except Exception as e:
+            print(f"[DEBUG] Warning: Could not reinitialize PyAudio: {e}")
+
         devices = self.audio_capture.get_loopback_devices()
 
         if not devices:
@@ -179,7 +195,8 @@ class TranscriberUI:
             messagebox.showwarning(
                 "No Devices",
                 "No loopback audio devices found.\n\n"
-                "Please ensure your audio output device supports loopback capture."
+                "Please ensure your audio output device supports loopback capture.\n"
+                "Try clicking the refresh button (↻) after connecting headphones."
             )
             return
 
@@ -190,6 +207,7 @@ class TranscriberUI:
 
         # Store device mapping
         self.device_mapping = {name: d['index'] for name, d in zip(device_names, devices)}
+        print(f"[DEBUG] Populated {len(devices)} device(s): {device_names}")
 
     def _toggle_recording(self):
         """Toggle recording on/off"""
@@ -202,10 +220,14 @@ class TranscriberUI:
         """Start recording"""
         print("[DEBUG] _start_recording called")
 
-        # Use default WASAPI loopback (None = auto-detect)
-        # This is more reliable than manually selecting from dropdown
+        # Use selected device from dropdown, fallback to auto-detect
         device_index = None
-        print(f"[DEBUG] Using default WASAPI loopback (device_index=None)")
+        selected = self.device_var.get()
+        if hasattr(self, 'device_mapping') and selected in self.device_mapping:
+            device_index = self.device_mapping[selected]
+            print(f"[DEBUG] Using selected device: {selected} (index={device_index})")
+        else:
+            print(f"[DEBUG] Using default WASAPI loopback (device_index=None)")
 
         # Load model if not loaded
         if self.transcriber.model is None:
@@ -368,6 +390,83 @@ class TranscriberUI:
                 messagebox.showinfo("Success", f"Transcription saved to:\n{filename}")
             else:
                 messagebox.showerror("Error", "Failed to save transcription")
+
+    def _upload_video(self):
+        """Upload and transcribe a video/audio file"""
+        file_path = filedialog.askopenfilename(
+            title="Select Video or Audio File",
+            filetypes=[
+                ("Video files", "*.mp4 *.mkv *.avi *.webm *.mov *.wmv"),
+                ("Audio files", "*.mp3 *.wav *.m4a *.ogg *.flac *.wma"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if not file_path:
+            return
+
+        # Load model if not loaded
+        if self.transcriber.model is None:
+            self._update_status("Loading model...")
+            self.root.update()
+
+            model_size = self.model_var.get()
+            language = self.language_var.get()
+            self.transcriber.model_size = model_size
+            self.transcriber.language = None if language == "auto" else language
+
+            if not self.transcriber.load_model():
+                messagebox.showerror("Error", "Failed to load Whisper model")
+                self._update_status("Idle")
+                return
+
+        # Disable buttons during processing
+        self.upload_btn.config(state='disabled')
+        self.record_btn.config(state='disabled')
+
+        # Show header immediately
+        filename = os.path.basename(file_path)
+        self.text_area.insert(tk.END, f"--- Transcription: {filename} ---\n\n")
+        self.text_area.see(tk.END)
+
+        def process_file():
+            error_msg = None
+
+            def on_progress(status):
+                nonlocal error_msg
+                if status.startswith("Error:"):
+                    error_msg = status
+                    self.root.after(0, self._update_status, status)
+                elif status.startswith("__segment__"):
+                    # Real-time segment display: __segment__start|end|text
+                    parts = status[len("__segment__"):].split("|", 2)
+                    if len(parts) == 3:
+                        seg = {'start': float(parts[0]), 'end': float(parts[1]), 'text': parts[2]}
+                        self.root.after(0, self._add_transcription_segment, seg)
+                else:
+                    self.root.after(0, self._update_status, status)
+
+            segments = self.transcriber.transcribe_file(file_path, progress_callback=on_progress)
+
+            def show_results():
+                if segments:
+                    self.text_area.insert(tk.END, f"\n--- End of {filename} ---\n\n")
+                    self.text_area.see(tk.END)
+                    self._update_status(f"Done - {len(segments)} segments from {filename}")
+                elif not error_msg:
+                    messagebox.showwarning("Warning", "No transcription segments were generated.\n\n"
+                                           "Check the terminal for more details.")
+                    self._update_status("Idle")
+                else:
+                    self._update_status("Idle")
+
+                self.upload_btn.config(state='normal')
+                self.record_btn.config(state='normal')
+
+            self.root.after(0, show_results)
+
+        thread = threading.Thread(target=process_file, daemon=True)
+        thread.start()
 
     def _toggle_always_on_top(self):
         """Toggle always on top"""
