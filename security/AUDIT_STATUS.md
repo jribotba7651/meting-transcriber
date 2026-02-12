@@ -10,6 +10,7 @@
 |-------|------|--------|--------|
 | 1 | Static Analysis | ✅ **COMPLETE** | [PHASE1_STATIC_ANALYSIS.md](PHASE1_STATIC_ANALYSIS.md) |
 | 2 | Network Isolation (Static) | ✅ **COMPLETE** | [PHASE2_NETWORK_ISOLATION.md](PHASE2_NETWORK_ISOLATION.md) |
+| 2R | Network Isolation (Runtime) | ✅ **COMPLETE** | [PHASE2_RUNTIME_REPORT.md](PHASE2_RUNTIME_REPORT.md) |
 | 3 | Runtime Security Analysis | ⏳ **DEFERRED** | Requires isolated VM |
 | 4 | Arctic Wolf Compatibility | ⏳ **DEFERRED** | Requires IT coordination + isolated VM |
 | 5 | Compliance & Legal Review | ✅ **COMPLETE** | [PHASE5_COMPLIANCE_LEGAL.md](PHASE5_COMPLIANCE_LEGAL.md) |
@@ -43,7 +44,7 @@
 | No suspicious npm install scripts | ✅ PASS |
 | All deps resolve to npmjs.org / github.com | ✅ PASS |
 | IPC channels don't expose arbitrary network | ✅ PASS |
-| Runtime verification (tcpdump, disabled adapters) | ⏳ Deferred to VM |
+| Runtime verification (WiFi disabled, 30 min test) | ✅ PASS — [Runtime Report](PHASE2_RUNTIME_REPORT.md) |
 
 ### Phase 5 — Compliance & Legal
 
