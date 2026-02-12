@@ -52,3 +52,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Overlay (Electron app)
+overlay/node_modules/
+overlay/dist/
+overlay/chat_history.json
+nul

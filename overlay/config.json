@@ -1,0 +1,23 @@
+{
+  "ollama": {
+    "baseUrl": "http://localhost:11434",
+    "model": "llama3.2",
+    "systemPrompt": "You are a helpful AI assistant. Be concise and direct. Format code with markdown code blocks."
+  },
+  "hotkeys": {
+    "toggle": "CommandOrControl+Shift+Space",
+    "ocr": "CommandOrControl+Shift+O",
+    "sendClipboard": "CommandOrControl+Shift+A"
+  },
+  "clipboard": {
+    "monitorInterval": 500
+  },
+  "window": {
+    "width": 420,
+    "height": 600,
+    "opacity": 0.95,
+    "x": null,
+    "y": null
+  },
+  "chatHistoryFile": "chat_history.json"
+}

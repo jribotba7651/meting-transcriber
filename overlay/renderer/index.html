@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <link rel="stylesheet" href="styles.css">
+  <title>AI Overlay</title>
+</head>
+<body>
+  <div id="app-container">
+    <!-- Draggable title bar -->
+    <div id="titlebar">
+      <span class="title">AI Assistant</span>
+      <div class="controls">
+        <button id="btn-opacity" title="Cycle opacity (95→70→40→20%)">
+          <span class="icon">◐</span>
+        </button>
+        <button id="btn-clickthrough" title="Toggle click-through mode">
+          <span class="icon">⇲</span>
+        </button>
+        <button id="btn-minimize" title="Hide (Ctrl+Shift+Space)">
+          <span class="icon">─</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Status bar -->
+    <div id="status-bar">
+      <span id="ollama-status" class="status-disconnected">● Checking Ollama...</span>
+      <span id="clipboard-indicator" class="hidden">📋 Clipboard captured</span>
+    </div>
+
+    <!-- Chat messages -->
+    <div id="chat-container">
+      <div id="welcome-msg" class="system-message">
+        Type a message, use <kbd>Ctrl+Shift+O</kbd> for OCR, or <kbd>Ctrl+Shift+A</kbd> to send clipboard.
+      </div>
+    </div>
+
+    <!-- Input area -->
+    <div id="input-area">
+      <div id="context-preview" class="hidden">
+        <span id="context-text"></span>
+        <button id="btn-clear-context" title="Remove context">✕</button>
+      </div>
+      <div id="input-row">
+        <textarea id="message-input" placeholder="Ask anything..." rows="1"></textarea>
+        <button id="btn-send" title="Send (Enter)">▶</button>
+      </div>
+      <div id="input-controls">
+        <button id="btn-ocr" title="Screenshot OCR (Ctrl+Shift+O)">📷 OCR</button>
+        <button id="btn-paste" title="Send clipboard (Ctrl+Shift+A)">📋 Paste</button>
+        <button id="btn-clear" title="Clear chat history">🗑 Clear</button>
+        <span id="model-label"></span>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

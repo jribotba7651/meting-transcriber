@@ -47,22 +47,42 @@ class AudioCapture:
             # Get default WASAPI info
             wasapi_info = self.audio.get_host_api_info_by_type(pyaudio.paWASAPI)
 
-            # Iterate through devices
+            # Iterate through ALL devices looking for loopback capable ones
             for i in range(self.audio.get_device_count()):
                 device_info = self.audio.get_device_info_by_index(i)
 
-                # Check if it's a loopback device
+                # Check if it's a WASAPI device with input channels
                 if (device_info.get('hostApi') == wasapi_info.get('index') and
-                    device_info.get('maxInputChannels') > 0 and
-                    'loopback' in device_info.get('name', '').lower()):
+                    device_info.get('maxInputChannels') > 0):
 
-                    devices.append({
-                        'index': i,
-                        'name': device_info.get('name'),
-                        'channels': device_info.get('maxInputChannels')
+                    name = device_info.get('name', '')
+                    is_loopback = device_info.get('isLoopbackDevice', False)
+
+                    # Accept devices that are marked as loopback OR have "loopback" in name
+                    if is_loopback or 'loopback' in name.lower():
+                        devices.append({
+                            'index': i,
+                            'name': name,
+                            'channels': device_info.get('maxInputChannels'),
+                            'isLoopback': is_loopback
+                        })
+
+            # Also try the built-in default loopback detection
+            try:
+                default_loopback = self.audio.get_default_wasapi_loopback()
+                default_idx = default_loopback['index']
+                # Add if not already in list
+                if not any(d['index'] == default_idx for d in devices):
+                    devices.insert(0, {
+                        'index': default_idx,
+                        'name': default_loopback.get('name', 'Default Loopback'),
+                        'channels': default_loopback.get('maxInputChannels', 2),
+                        'isLoopback': True
                     })
+            except Exception as e:
+                logger.debug(f"Could not get default WASAPI loopback: {e}")
 
-            # If no loopback devices found, try to get default output as loopback
+            # If still nothing, try default output device
             if not devices:
                 default_speakers = self.audio.get_default_output_device_info()
                 loopback = self.audio.get_device_info_by_index(
@@ -73,12 +93,14 @@ class AudioCapture:
                     devices.append({
                         'index': loopback['index'],
                         'name': loopback.get('name'),
-                        'channels': loopback.get('maxInputChannels')
+                        'channels': loopback.get('maxInputChannels'),
+                        'isLoopback': True
                     })
 
         except Exception as e:
             logger.error(f"Error getting loopback devices: {e}")
 
+        logger.info(f"Found {len(devices)} loopback device(s): {[d['name'] for d in devices]}")
         return devices
 
     def start_recording(self, device_index=None):
