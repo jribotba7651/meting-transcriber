@@ -1,5 +1,5 @@
 faster-whisper==1.0.3
 PyAudioWPatch==0.2.12.16
 numpy==1.24.3
-moviepy>=1.0.3
+moviepy==1.0.3
 pyinstaller==6.3.0
