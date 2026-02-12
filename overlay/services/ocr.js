@@ -1,24 +1,36 @@
 const { createWorker } = require('tesseract.js');
-const path = require('path');
 
 class OCRService {
-  constructor() {
+  constructor(languages = 'eng+spa') {
     this.worker = null;
+    this.languages = languages;
+    this.initializing = false;
   }
 
   async initWorker() {
     if (this.worker) return;
-    this.worker = await createWorker('eng+spa');
+    if (this.initializing) {
+      // Wait for ongoing init
+      while (this.initializing) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+      return;
+    }
+
+    this.initializing = true;
+    try {
+      this.worker = await createWorker(this.languages);
+    } finally {
+      this.initializing = false;
+    }
   }
 
   /**
    * Capture the screen and run OCR on it
-   * Returns extracted text
    */
   async captureAndRecognize() {
     await this.initWorker();
 
-    // Dynamic import for screenshot-desktop (ESM/CJS compatibility)
     const screenshot = require('screenshot-desktop');
 
     // Capture the full screen as a PNG buffer

@@ -4,6 +4,8 @@ let currentModel = 'llama3.2';
 let isStreaming = false;
 let clipboardMonitoring = false;
 let currentContext = '';
+let systemPrompt = '';
+let saveDebounce = null;
 
 // DOM elements
 const messagesEl = document.getElementById('messages');
@@ -26,6 +28,80 @@ const ollamaIndicator = document.getElementById('ollama-indicator');
 const contextPreview = document.getElementById('context-preview');
 const contextText = document.getElementById('context-text');
 const clearContext = document.getElementById('clear-context');
+
+// ====== Markdown Rendering ======
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function formatMessage(text) {
+  // Process code blocks first (protect them from other replacements)
+  const codeBlocks = [];
+  let processed = text.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push({ lang, code: code.trimEnd() });
+    return `%%CODEBLOCK_${idx}%%`;
+  });
+
+  // Inline code (protect from other replacements)
+  const inlineCodes = [];
+  processed = processed.replace(/`([^`]+)`/g, (match, code) => {
+    const idx = inlineCodes.length;
+    inlineCodes.push(code);
+    return `%%INLINE_${idx}%%`;
+  });
+
+  // Bold
+  processed = processed.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Italic
+  processed = processed.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  // Strikethrough
+  processed = processed.replace(/~~(.+?)~~/g, '<del>$1</del>');
+  // Headers (## Header)
+  processed = processed.replace(/^### (.+)$/gm, '<h4>$1</h4>');
+  processed = processed.replace(/^## (.+)$/gm, '<h3>$1</h3>');
+  processed = processed.replace(/^# (.+)$/gm, '<h2>$1</h2>');
+  // Bullet lists
+  processed = processed.replace(/^[*-] (.+)$/gm, '<li>$1</li>');
+  processed = processed.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+  // Numbered lists
+  processed = processed.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+  // Links
+  processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+  // Line breaks (but not inside block elements)
+  processed = processed.replace(/\n/g, '<br>');
+
+  // Restore inline code
+  inlineCodes.forEach((code, idx) => {
+    processed = processed.replace(`%%INLINE_${idx}%%`, `<code>${escapeHtml(code)}</code>`);
+  });
+
+  // Restore code blocks with copy button
+  codeBlocks.forEach((block, idx) => {
+    const langLabel = block.lang ? `<span class="code-lang">${block.lang}</span>` : '';
+    const copyBtn = `<button class="copy-btn" onclick="copyCode(this)" title="Copy code">Copy</button>`;
+    const html = `<div class="code-block">${langLabel}${copyBtn}<pre><code>${escapeHtml(block.code)}</code></pre></div>`;
+    processed = processed.replace(`%%CODEBLOCK_${idx}%%`, html);
+  });
+
+  return processed;
+}
+
+// Global function for copy button onclick
+window.copyCode = function(btn) {
+  const code = btn.parentElement.querySelector('code').textContent;
+  navigator.clipboard.writeText(code).then(() => {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = 'Copy';
+      btn.classList.remove('copied');
+    }, 1500);
+  });
+};
 
 // ====== Chat Functions ======
 
@@ -70,24 +146,36 @@ function addStreamingMessage() {
   return msg;
 }
 
-function formatMessage(text) {
-  // Simple markdown-like formatting
-  let html = text
-    // Code blocks
-    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
-    // Inline code
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    // Bold
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    // Line breaks
-    .replace(/\n/g, '<br>');
-
-  return html;
-}
-
 function scrollToBottom() {
   chatContainer.scrollTop = chatContainer.scrollHeight;
 }
+
+// ====== Persistence ======
+
+function debounceSaveHistory() {
+  if (saveDebounce) clearTimeout(saveDebounce);
+  saveDebounce = setTimeout(() => {
+    window.api.saveHistory(chatHistory);
+  }, 1000);
+}
+
+async function loadPersistedHistory() {
+  try {
+    const history = await window.api.loadHistory();
+    if (history && history.length > 0) {
+      chatHistory = history;
+      // Render persisted messages (skip system prompt)
+      for (const msg of history) {
+        if (msg.role === 'system') continue;
+        addMessage(msg.role, msg.content);
+      }
+    }
+  } catch (e) {
+    // No history, start fresh
+  }
+}
+
+// ====== Send Message ======
 
 async function sendMessage() {
   const text = userInput.value.trim();
@@ -104,39 +192,50 @@ async function sendMessage() {
   userInput.value = '';
   autoResizeInput();
 
+  // Add system prompt at the start of conversation if configured
+  const messagesForAI = [];
+  if (systemPrompt && chatHistory.length === 0) {
+    messagesForAI.push({ role: 'system', content: systemPrompt });
+  }
+
   chatHistory.push({ role: 'user', content: fullMessage });
+  messagesForAI.push(...chatHistory);
 
   isStreaming = true;
   btnSend.disabled = true;
   statusText.textContent = 'Thinking...';
 
   const streamMsg = addStreamingMessage();
-  let fullResponse = '';
 
   try {
-    // Use streaming
-    window.api.chatStream(chatHistory, currentModel);
-
-    // The response comes via events
+    // Use streaming - the handler in main.js sends chunks via events
+    window.api.chatStream(
+      systemPrompt
+        ? [{ role: 'system', content: systemPrompt }, ...chatHistory]
+        : chatHistory,
+      currentModel
+    );
     streamMsg.innerHTML = '';
-
   } catch (err) {
     streamMsg.innerHTML = `<span class="error-text">Error: ${err.message}</span>`;
-    isStreaming = false;
-    btnSend.disabled = false;
-    statusText.textContent = 'Error';
+    finishStreaming();
   }
 }
 
-// Stream event handlers
+function finishStreaming() {
+  isStreaming = false;
+  btnSend.disabled = false;
+  statusText.textContent = 'Ready';
+}
+
+// ====== Stream Event Handlers ======
+
 window.api.onStreamChunk((chunk) => {
   const streamMsg = document.querySelector('#streaming-message .message-content');
   if (streamMsg) {
-    // Remove typing indicator if present
     const typingIndicator = streamMsg.querySelector('.typing-indicator');
     if (typingIndicator) typingIndicator.remove();
 
-    // Accumulate raw text
     if (!streamMsg._rawText) streamMsg._rawText = '';
     streamMsg._rawText += chunk;
     streamMsg.innerHTML = formatMessage(streamMsg._rawText);
@@ -148,15 +247,31 @@ window.api.onStreamDone(() => {
   const streamMsg = document.querySelector('#streaming-message .message-content');
   if (streamMsg && streamMsg._rawText) {
     chatHistory.push({ role: 'assistant', content: streamMsg._rawText });
+    debounceSaveHistory();
   }
 
-  // Remove streaming ID
   const streamEl = document.getElementById('streaming-message');
   if (streamEl) streamEl.removeAttribute('id');
 
-  isStreaming = false;
-  btnSend.disabled = false;
-  statusText.textContent = 'Ready';
+  finishStreaming();
+});
+
+window.api.onStreamError((err) => {
+  const streamMsg = document.querySelector('#streaming-message .message-content');
+  if (streamMsg) {
+    streamMsg.innerHTML = `<span class="error-text">Error: ${err}</span>`;
+  }
+
+  const streamEl = document.getElementById('streaming-message');
+  if (streamEl) streamEl.removeAttribute('id');
+
+  // Remove the failed user message from history so they can retry
+  if (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'user') {
+    chatHistory.pop();
+  }
+
+  finishStreaming();
+  statusText.textContent = 'Error - check Ollama';
 });
 
 // ====== Context Management ======
@@ -277,7 +392,10 @@ async function loadModels() {
     models.forEach(m => {
       const div = document.createElement('div');
       div.className = `model-option ${m.name === currentModel ? 'active' : ''}`;
-      div.textContent = m.name;
+
+      const sizeMB = m.size ? `${(m.size / 1024 / 1024 / 1024).toFixed(1)}GB` : '';
+      div.innerHTML = `<span>${m.name}</span>${sizeMB ? `<span class="model-size">${sizeMB}</span>` : ''}`;
+
       div.addEventListener('click', () => {
         currentModel = m.name;
         modelBadge.textContent = m.name;
@@ -311,9 +429,17 @@ function cycleOpacity() {
 
 function clearChat() {
   chatHistory = [];
+  window.api.saveHistory([]);
   messagesEl.innerHTML = '';
   addMessage('system', 'Chat cleared. Start a new conversation.');
 }
+
+// History cleared from tray menu
+window.api.onHistoryCleared(() => {
+  chatHistory = [];
+  messagesEl.innerHTML = '';
+  addMessage('system', 'Chat history cleared from system tray.');
+});
 
 // ====== Auto-resize textarea ======
 
@@ -324,7 +450,6 @@ function autoResizeInput() {
 
 // ====== Event Listeners ======
 
-// Send message
 btnSend.addEventListener('click', sendMessage);
 userInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -334,24 +459,50 @@ userInput.addEventListener('keydown', (e) => {
 });
 userInput.addEventListener('input', autoResizeInput);
 
-// Actions
 btnClipboard.addEventListener('click', toggleClipboardMonitoring);
 btnOCR.addEventListener('click', triggerOCR);
 btnClear.addEventListener('click', clearChat);
 
-// Window controls
 btnMinimize.addEventListener('click', () => window.api.minimizeWindow());
 btnClose.addEventListener('click', () => window.api.closeWindow());
 btnPassthrough.addEventListener('click', togglePassthrough);
 btnOpacity.addEventListener('click', cycleOpacity);
 
-// Model selector
 modelBadge.addEventListener('click', toggleModelSelector);
-
-// Context
 clearContext.addEventListener('click', clearCurrentContext);
 
 // ====== Init ======
+
+async function init() {
+  // Load config
+  try {
+    const config = await window.api.getConfig();
+    if (config.ollama?.defaultModel) {
+      currentModel = config.ollama.defaultModel;
+      modelBadge.textContent = currentModel;
+    }
+    if (config.clipboard?.autoMonitor) {
+      toggleClipboardMonitoring();
+    }
+  } catch (e) {
+    // Use defaults
+  }
+
+  // Load system prompt
+  try {
+    systemPrompt = await window.api.getSystemPrompt() || '';
+  } catch (e) {
+    // No system prompt
+  }
+
+  // Load persisted history
+  await loadPersistedHistory();
+
+  // Check Ollama connection
+  await checkOllama();
+
+  userInput.focus();
+}
 
 async function checkOllama() {
   try {
@@ -359,8 +510,8 @@ async function checkOllama() {
     if (models.length > 0) {
       ollamaIndicator.textContent = 'AI: ON';
       ollamaIndicator.classList.add('active');
+      ollamaIndicator.classList.remove('error');
 
-      // Auto-select first model if current not found
       const found = models.find(m => m.name === currentModel);
       if (!found && models.length > 0) {
         currentModel = models[0].name;
@@ -369,6 +520,9 @@ async function checkOllama() {
     } else {
       ollamaIndicator.textContent = 'AI: OFF';
       ollamaIndicator.classList.add('error');
+      ollamaIndicator.classList.remove('active');
+
+      addMessage('system', 'Ollama not detected. Install from ollama.ai, then run:\n```\nollama serve\nollama pull llama3.2\n```');
     }
   } catch (e) {
     ollamaIndicator.textContent = 'AI: OFF';
@@ -376,8 +530,4 @@ async function checkOllama() {
   }
 }
 
-// Check Ollama on startup
-checkOllama();
-
-// Focus input
-userInput.focus();
+init();

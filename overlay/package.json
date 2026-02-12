@@ -5,14 +5,48 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "electron . --dev"
+    "dev": "electron . --dev",
+    "build:win": "electron-builder --win --x64",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
+    "build": "electron-builder"
+  },
+  "build": {
+    "appId": "com.local-ai.overlay",
+    "productName": "Local AI Assistant",
+    "files": [
+      "main.js",
+      "preload.js",
+      "config.json",
+      "renderer/**/*",
+      "services/**/*",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": ["nsis", "portable"],
+      "icon": null
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": null
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": null
+    },
+    "nsis": {
+      "oneClick": true,
+      "allowToChangeInstallationDirectory": false
+    }
   },
   "dependencies": {
     "electron": "^28.0.0",
     "tesseract.js": "^5.0.0",
     "screenshot-desktop": "^1.15.0"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "electron-builder": "^24.0.0"
+  },
   "keywords": ["ai", "overlay", "ollama", "local", "assistant"],
   "license": "MIT"
 }

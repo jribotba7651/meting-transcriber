@@ -437,6 +437,114 @@ body {
   border-radius: 2px;
 }
 
+/* Code blocks with copy button */
+.code-block {
+  position: relative;
+  margin: 6px 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.code-block pre {
+  margin: 0;
+  padding: 10px 12px;
+  padding-top: 28px;
+  background: transparent;
+  overflow-x: auto;
+}
+
+.code-block code {
+  background: none !important;
+  padding: 0 !important;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.code-lang {
+  position: absolute;
+  top: 4px;
+  left: 10px;
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.copy-btn {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 10px;
+  transition: all 0.15s;
+}
+
+.copy-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-secondary);
+}
+
+.copy-btn.copied {
+  background: rgba(34, 197, 94, 0.2);
+  border-color: var(--success);
+  color: var(--success);
+}
+
+/* Model option with size */
+.model-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.model-size {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: monospace;
+}
+
+/* Message content lists */
+.message-content ul,
+.message-content ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+
+.message-content li {
+  margin: 2px 0;
+}
+
+.message-content h2,
+.message-content h3,
+.message-content h4 {
+  margin: 8px 0 4px 0;
+  color: var(--text-primary);
+}
+
+.message-content h2 { font-size: 15px; }
+.message-content h3 { font-size: 14px; }
+.message-content h4 { font-size: 13px; }
+
+.message-content a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.message-content a:hover {
+  text-decoration: underline;
+}
+
+.message-content em {
+  color: var(--text-secondary);
+}
+
 /* Error message */
 .error-text {
   color: var(--danger);

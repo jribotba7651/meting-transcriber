@@ -1,11 +1,11 @@
 const { clipboard } = require('electron');
 
 class ClipboardService {
-  constructor(onChange) {
+  constructor(onChange, pollMs = 500) {
     this.onChange = onChange;
     this.lastText = '';
     this.interval = null;
-    this.pollMs = 500; // Check every 500ms
+    this.pollMs = pollMs;
   }
 
   start() {
@@ -14,10 +14,14 @@ class ClipboardService {
     this.lastText = clipboard.readText();
 
     this.interval = setInterval(() => {
-      const currentText = clipboard.readText();
-      if (currentText && currentText !== this.lastText) {
-        this.lastText = currentText;
-        this.onChange(currentText);
+      try {
+        const currentText = clipboard.readText();
+        if (currentText && currentText !== this.lastText) {
+          this.lastText = currentText;
+          this.onChange(currentText);
+        }
+      } catch (e) {
+        // Clipboard may be locked by another app, skip this poll
       }
     }, this.pollMs);
   }

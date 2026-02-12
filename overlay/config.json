@@ -1,0 +1,27 @@
+{
+  "ollama": {
+    "baseUrl": "http://localhost:11434",
+    "defaultModel": "llama3.2",
+    "requestTimeout": 120000
+  },
+  "window": {
+    "width": 380,
+    "height": 500,
+    "opacity": 0.95,
+    "position": "bottom-right",
+    "margin": 20
+  },
+  "shortcuts": {
+    "toggleOverlay": "CommandOrControl+Shift+Space",
+    "screenshotOCR": "CommandOrControl+Shift+O",
+    "clipboardAsk": "CommandOrControl+Shift+A"
+  },
+  "clipboard": {
+    "pollIntervalMs": 500,
+    "autoMonitor": false
+  },
+  "ocr": {
+    "languages": "eng+spa"
+  },
+  "systemPrompt": "You are a helpful local AI assistant. Be concise and direct. When showing code, use markdown code blocks. Respond in the same language the user writes in."
+}
