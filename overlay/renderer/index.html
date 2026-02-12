@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Local AI Assistant</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Title bar (draggable) -->
+    <div id="titlebar">
+      <div id="drag-region">
+        <span id="title">AI Assistant</span>
+        <span id="model-badge" title="Click to change model">llama3.2</span>
+      </div>
+      <div id="window-controls">
+        <button id="btn-passthrough" title="Toggle click-through (Ctrl+Shift+Space to toggle visibility)">&#128065;</button>
+        <button id="btn-opacity" title="Cycle opacity">&#9681;</button>
+        <button id="btn-minimize" title="Hide (Ctrl+Shift+Space to show)">&#8722;</button>
+        <button id="btn-close" title="Quit">&#10005;</button>
+      </div>
+    </div>
+
+    <!-- Model selector (hidden by default) -->
+    <div id="model-selector" class="hidden">
+      <div id="model-list"></div>
+    </div>
+
+    <!-- Status bar -->
+    <div id="status-bar">
+      <span id="status-text">Ready</span>
+      <div id="status-indicators">
+        <span id="clipboard-indicator" class="indicator" title="Clipboard monitoring">CB: OFF</span>
+        <span id="ollama-indicator" class="indicator" title="Ollama connection">AI: --</span>
+      </div>
+    </div>
+
+    <!-- Chat messages area -->
+    <div id="chat-container">
+      <div id="messages">
+        <div class="message system">
+          <div class="message-content">
+            <strong>Local AI Assistant</strong><br>
+            Shortcuts:<br>
+            <code>Ctrl+Shift+Space</code> - Show/Hide overlay<br>
+            <code>Ctrl+Shift+O</code> - Screenshot + OCR<br>
+            <code>Ctrl+Shift+A</code> - Ask AI about clipboard<br>
+            <br>
+            Powered by <strong>Ollama</strong> (local). No data leaves your machine.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Input area -->
+    <div id="input-area">
+      <div id="context-preview" class="hidden">
+        <span id="context-label">Context:</span>
+        <span id="context-text"></span>
+        <button id="clear-context" title="Clear context">&times;</button>
+      </div>
+      <div id="input-row">
+        <textarea id="user-input" placeholder="Ask anything... (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
+        <button id="btn-send" title="Send">&#9654;</button>
+      </div>
+      <div id="input-actions">
+        <button id="btn-clipboard" title="Toggle clipboard monitoring">&#128203; Clipboard</button>
+        <button id="btn-ocr" title="Screenshot + OCR">&#128247; OCR</button>
+        <button id="btn-clear" title="Clear chat">&#128465; Clear</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
