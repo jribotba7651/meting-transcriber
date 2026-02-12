@@ -1,6 +1,7 @@
 """
 Meeting Notes Assistant - Main Entry Point
-Transcribe uploaded audio/video files using Whisper (no audio recording)
+Transcribe uploaded audio/video files or live system audio using Whisper.
+Live audio is processed in real-time and immediately discarded — zero audio persistence.
 """
 
 import os
@@ -11,6 +12,7 @@ import logging
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from audio_capture import AudioCapture
 from transcriber import Transcriber
 from ui import TranscriberUI
 
@@ -31,7 +33,8 @@ def load_config():
         "language": "auto",
         "device": "auto",
         "window_opacity": 0.95,
-        "always_on_top": True
+        "always_on_top": True,
+        "buffer_duration": 10
     }
 
     # Try to load config file
@@ -69,6 +72,12 @@ def main():
     # Load configuration
     config = load_config()
 
+    # Initialize audio capture (stream-only, zero persistence)
+    logger.info("Initializing audio capture (stream-only mode)...")
+    audio_capture = AudioCapture(
+        accumulate_seconds=config.get('buffer_duration', 10)
+    )
+
     # Initialize transcriber
     logger.info("Initializing transcriber...")
     transcriber = Transcriber(
@@ -79,7 +88,7 @@ def main():
 
     # Create and run UI
     logger.info("Starting UI...")
-    app = TranscriberUI(transcriber, config)
+    app = TranscriberUI(audio_capture, transcriber, config)
 
     try:
         app.run()
@@ -88,6 +97,7 @@ def main():
     except Exception as e:
         logger.error(f"Application error: {e}", exc_info=True)
     finally:
+        audio_capture.cleanup()
         logger.info("Goodbye!")
 
 

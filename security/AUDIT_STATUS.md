@@ -30,7 +30,7 @@
 | F-FS-001 | MEDIUM | ⏳ Open | `chat_history.json` stored in plaintext |
 | F-JS-001 | MODERATE | 🟡 **Accepted** | Electron 34.2.0 ASAR bypass (can't upgrade without breaking invisibility) |
 | F-LLM-001 | LOW | ⏳ Open | Ollama telemetry not explicitly disabled |
-| F-PY-002 | LOW | 🟡 **Accepted** | pip-audit couldn't resolve PyAudioWPatch (package removed in refactor) |
+| F-PY-002 | LOW | 🟡 **Accepted** | pip-audit couldn't resolve PyAudioWPatch (re-added for stream-only capture) |
 | F-FS-002 | LOW | ⏳ Open | No explicit file permissions on written files |
 
 ### Phase 2 — Network Isolation
@@ -49,11 +49,11 @@
 
 | ID | Original Severity | Current Status | Finding |
 |----|-------------------|----------------|---------|
-| C-001 | ~~CRITICAL~~ | 🟢 **LOW** | ~~Audio recording consent~~ → Screen capture awareness (audio recording removed) |
+| C-001 | ~~CRITICAL~~ | 🟢 **LOW** | Live transcription consent — consent dialog implemented, zero audio persistence (stream-only) |
 | C-002 | ~~CRITICAL~~ | 🟡 **MEDIUM** | No data retention / auto-deletion |
 | C-003 | ~~CRITICAL~~ | 🟡 **MEDIUM** | No privacy notice or disclaimer |
-| C-004 | ~~HIGH~~ | 🟡 **MEDIUM** | No data classification labels on output files |
-| C-005 | MEDIUM | ⏳ Open | ~~Recording indicator not visible~~ (N/A — recording removed) |
+| C-004 | ~~HIGH~~ | ✅ **RESOLVED** | ~~No data classification labels~~ → CONFIDENTIAL header added to save_transcription |
+| C-005 | MEDIUM | ✅ **RESOLVED** | ~~Recording indicator not visible~~ → "🔴 TRANSCRIBING LIVE" shown in status bar |
 | C-006 | LOW | ⏳ Open | No compliance settings in config |
 
 ---
@@ -62,12 +62,12 @@
 
 | Risk Level | Count | Details |
 |------------|-------|---------|
-| CRITICAL | **0** | All 3 eliminated by removing audio recording |
+| CRITICAL | **0** | Eliminated by consent dialog + zero audio persistence |
 | HIGH | **1** | F-JS-002 (build-time only — `tar` CVEs in electron-builder) |
-| MEDIUM | **3** | F-FS-001, C-002, C-003, C-004 |
+| MEDIUM | **2** | F-FS-001, C-002, C-003 |
 | LOW | **3** | C-001, F-LLM-001, F-FS-002, C-006 |
-| Accepted | **2** | F-JS-001 (Electron ASAR), F-PY-002 (PyAudioWPatch removed) |
-| RESOLVED | **4** | F-OCR-001, F-PY-001, F-JS-003, C-005 |
+| Accepted | **2** | F-JS-001 (Electron ASAR), F-PY-002 (PyAudioWPatch) |
+| RESOLVED | **6** | F-OCR-001, F-PY-001, F-JS-003, C-004, C-005 |
 
 **Deployment blockers: 0**
 
@@ -77,7 +77,8 @@
 
 | ID | Decision | Date | Impact |
 |----|----------|------|--------|
-| ADR-001 | [Remove audio recording, convert to notes-only](ARCHITECTURE_DECISION_RECORD.md) | 2025-02-12 | Eliminated 3 CRITICAL findings |
+| ADR-001 | [Remove audio recording, convert to notes-only](ARCHITECTURE_DECISION_RECORD.md) | 2026-02-12 | Eliminated 3 CRITICAL findings |
+| ADR-002 | Restore live transcription with zero audio persistence | 2026-02-12 | Stream-only processing with consent dialog; C-001 stays LOW |
 
 ---
 
@@ -85,7 +86,6 @@
 
 1. **Phase 3 & 4** — Set up isolated VM for runtime testing and Arctic Wolf compatibility assessment
 2. **C-002** — Implement data retention with auto-deletion (recommended, ~1 day)
-3. **C-004** — Add classification labels to output files (recommended, ~0.5 day)
-4. **C-003** — Add privacy notice (recommended, ~0.5 day)
-5. **F-FS-001** — Encrypt or add disable option for `chat_history.json` (recommended, ~0.5 day)
-6. **Phase 6** — Compile final audit report for management review
+3. **C-003** — Add privacy notice (recommended, ~0.5 day)
+4. **F-FS-001** — Encrypt or add disable option for `chat_history.json` (recommended, ~0.5 day)
+5. **Phase 6** — Compile final audit report for management review

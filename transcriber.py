@@ -308,8 +308,11 @@ class Transcriber:
         """
         try:
             with open(filename, 'w', encoding='utf-8') as f:
+                f.write("CONFIDENTIAL — INTERNAL USE ONLY\n")
+                f.write("=" * 80 + "\n")
                 f.write(f"Meeting Transcription\n")
                 f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Classification: Internal/Confidential\n")
                 f.write("=" * 80 + "\n\n")
 
                 for seg in segments:
