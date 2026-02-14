@@ -10,6 +10,7 @@ import json
 import os
 from datetime import datetime
 import threading
+from threading import Lock
 import time
 
 
@@ -41,6 +42,15 @@ class TranscriberUI:
         self.live_start_time = None
         self.live_elapsed_timer = None
         self.live_segment_offset = 0.0
+        self._offset_lock = Lock()
+        self._chunk_counter = 0  # monotonic chunk counter for correct offset
+
+        # Shared transcript file for overlay integration
+        self.live_transcript_dir = os.path.join(
+            os.environ.get('LOCALAPPDATA', os.path.expanduser('~')),
+            'meeting-transcriber'
+        )
+        self.live_transcript_path = os.path.join(self.live_transcript_dir, 'live_transcript.json')
 
         self._setup_ui()
         self._apply_config()
@@ -198,21 +208,31 @@ class TranscriberUI:
         self.loopback_devices = self.audio_capture.get_loopback_devices()
 
         if self.loopback_devices:
-            device_names = [d['name'] for d in self.loopback_devices]
+            # "All Devices" captures from every output simultaneously — never misses audio
+            device_names = [f'🔊 All Devices ({len(self.loopback_devices)} found)'] + [d['name'] for d in self.loopback_devices]
             self.device_combo['values'] = device_names
-            self.device_combo.current(0)
+            self.device_combo.current(0)  # Default to all-device capture
         else:
             self.device_combo['values'] = ['No loopback devices found']
             self.device_var.set('No loopback devices found')
 
     def _get_selected_device_index(self):
-        """Get the device index of the selected loopback device"""
+        """Get the device index of the selected loopback device.
+        Returns 'auto' for auto-detect mode, a device index for specific device,
+        or None if no devices available."""
         if not self.loopback_devices:
             return None
 
         current_selection = self.device_combo.current()
-        if current_selection >= 0 and current_selection < len(self.loopback_devices):
-            return self.loopback_devices[current_selection]['index']
+
+        # Index 0 = "Auto-detect" option
+        if current_selection == 0:
+            return 'auto'
+
+        # Offset by 1 for the actual device list (auto-detect is index 0)
+        device_idx = current_selection - 1
+        if 0 <= device_idx < len(self.loopback_devices):
+            return self.loopback_devices[device_idx]['index']
         return None
 
     # --- Live Transcription ---
@@ -269,29 +289,42 @@ class TranscriberUI:
                 self._update_status("Ready \u2014 Upload a file or start live transcription")
                 return
 
-        # Define transcription callback (called from audio processing thread)
+        # Define transcription callback (called from transcription worker thread)
         def on_audio_chunk(audio_data):
             """Receive audio, transcribe, discard audio. Only text survives."""
             if not self.is_live_transcribing:
                 return
 
+            # Grab the offset for THIS chunk atomically before transcribing
+            with self._offset_lock:
+                chunk_offset = self.live_segment_offset
+                self._chunk_counter += 1
+
             segments = self.transcriber.transcribe_audio(audio_data)
+
+            # Calculate the actual net duration (exclude overlap to avoid duplicate timestamps)
+            overlap_seconds = self.audio_capture.overlap_seconds
+            if audio_data is not None:
+                chunk_duration = len(audio_data) / 16000.0
+                net_duration = max(0, chunk_duration - overlap_seconds)
+            else:
+                net_duration = 0
 
             for seg in segments:
                 # Offset timestamps relative to session start
-                seg['start'] += self.live_segment_offset
-                seg['end'] += self.live_segment_offset
+                seg['start'] += chunk_offset
+                seg['end'] += chunk_offset
                 self.root.after(0, self._add_transcription_segment, seg)
 
-            # Update offset for next chunk
-            if audio_data is not None:
-                chunk_duration = len(audio_data) / 16000.0
-                self.live_segment_offset += chunk_duration
+            # Update offset for next chunk (net duration only, overlap already counted)
+            with self._offset_lock:
+                self.live_segment_offset = chunk_offset + net_duration
 
         # Start capture
         self.is_live_transcribing = True
         self.live_start_time = time.time()
         self.live_segment_offset = 0.0
+        self._chunk_counter = 0
 
         # Show header
         self.text_area.insert(tk.END, f"--- Live Transcription Started: {datetime.now().strftime('%H:%M:%S')} ---\n\n")
@@ -323,7 +356,26 @@ class TranscriberUI:
         elapsed = time.time() - self.live_start_time
         minutes = int(elapsed // 60)
         seconds = int(elapsed % 60)
-        self._update_status(f"\U0001f534 TRANSCRIBING LIVE \u2014 {minutes:02d}:{seconds:02d}")
+
+        device_count = len(self.audio_capture.active_device_names)
+        status = f"\U0001f534 TRANSCRIBING LIVE \u2014 {minutes:02d}:{seconds:02d}  ({device_count} device(s))"
+
+        # Show buffer progress when waiting for first chunk
+        buffer_pct = int(self.audio_capture.buffer_progress * 100)
+        if buffer_pct < 100:
+            status += f"  | Buffering: {buffer_pct}%"
+
+        # Show warning if audio chunks are being dropped
+        dropped = self.audio_capture.dropped_chunks
+        if dropped > 0:
+            status += f"  \u26a0\ufe0f {dropped} chunk(s) dropped — Whisper falling behind"
+
+        # Show pending queue size for visibility
+        pending = self.audio_capture.transcription_queue.qsize()
+        if pending > 0:
+            status += f"  | Queue: {pending}"
+
+        self._update_status(status)
 
         self.live_elapsed_timer = self.root.after(1000, self._update_live_status)
 
@@ -349,6 +401,9 @@ class TranscriberUI:
         self.live_start_time = None
         self.live_segment_offset = 0.0
 
+        # Mark transcript as inactive for overlay
+        self._clear_live_transcript()
+
         # Re-enable UI
         self.live_btn.config(text="\U0001f534 Start Live Transcription")
         self.upload_btn.config(state='normal')
@@ -365,6 +420,45 @@ class TranscriberUI:
 
         self.text_area.insert(tk.END, text)
         self.text_area.see(tk.END)
+
+        # Export live transcript for overlay integration
+        if self.is_live_transcribing:
+            self._save_live_transcript()
+
+    def _save_live_transcript(self):
+        """Write live transcript to JSON for overlay integration"""
+        try:
+            os.makedirs(self.live_transcript_dir, exist_ok=True)
+
+            data = {
+                'timestamp': datetime.now().isoformat(),
+                'segments': self.transcription_segments,
+                'session_id': str(self.live_start_time) if self.live_start_time else None,
+                'is_active': self.is_live_transcribing
+            }
+
+            # Write to temp file first, then rename for atomic write
+            tmp_path = self.live_transcript_path + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False)
+            os.replace(tmp_path, self.live_transcript_path)
+        except Exception as e:
+            print(f"[Transcript export] Error: {e}")
+
+    def _clear_live_transcript(self):
+        """Mark live transcript as inactive"""
+        try:
+            if os.path.exists(self.live_transcript_path):
+                data = {
+                    'timestamp': datetime.now().isoformat(),
+                    'segments': self.transcription_segments,
+                    'session_id': None,
+                    'is_active': False
+                }
+                with open(self.live_transcript_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False)
+        except Exception as e:
+            print(f"[Transcript export] Error clearing: {e}")
 
     def _clear_transcription(self):
         """Clear the transcription"""

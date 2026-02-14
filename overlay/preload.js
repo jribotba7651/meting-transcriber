@@ -49,5 +49,8 @@ contextBridge.exposeInMainWorld('api', {
   getConfig: () => ipcRenderer.invoke('config:get'),
 
   // --- Health check ---
-  checkOllama: () => ipcRenderer.invoke('app:check-ollama')
+  checkOllama: () => ipcRenderer.invoke('app:check-ollama'),
+
+  // --- Live Transcript ---
+  getLiveTranscript: () => ipcRenderer.invoke('transcript:get-live')
 });

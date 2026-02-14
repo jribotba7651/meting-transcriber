@@ -332,6 +332,26 @@ function setupIPC() {
   ipcMain.handle('app:check-ollama', async () => {
     return await ollamaClient.checkConnection();
   });
+
+  // Transcript: get live transcript from Python app
+  ipcMain.handle('transcript:get-live', () => {
+    const transcriptPath = path.join(
+      process.env.LOCALAPPDATA || path.join(require('os').homedir(), 'AppData', 'Local'),
+      'meeting-transcriber',
+      'live_transcript.json'
+    );
+
+    try {
+      if (fs.existsSync(transcriptPath)) {
+        const raw = fs.readFileSync(transcriptPath, 'utf8');
+        const data = JSON.parse(raw);
+        return { success: true, data };
+      }
+      return { success: false, error: 'No live transcript found. Start live transcription first.' };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
 }
 
 // ─── App Ready ─────────────────────────────────────────────────

@@ -13,6 +13,7 @@ const messageInput = document.getElementById('message-input');
 const btnSend = document.getElementById('btn-send');
 const btnOCR = document.getElementById('btn-ocr');
 const btnPaste = document.getElementById('btn-paste');
+const btnTranscript = document.getElementById('btn-transcript');
 const btnClear = document.getElementById('btn-clear');
 const btnOpacity = document.getElementById('btn-opacity');
 const btnClickThrough = document.getElementById('btn-clickthrough');
@@ -99,6 +100,33 @@ function setupEventListeners() {
     }
     btnOCR.textContent = '📷 OCR';
     btnOCR.disabled = false;
+  });
+
+  // Live transcript button
+  btnTranscript.addEventListener('click', async () => {
+    btnTranscript.disabled = true;
+    btnTranscript.textContent = '⏳ Loading...';
+    try {
+      const result = await window.api.getLiveTranscript();
+      if (result.success && result.data && result.data.segments && result.data.segments.length > 0) {
+        const fullText = result.data.segments
+          .map(s => {
+            const ts = formatTranscriptTime(s.start);
+            return `[${ts}] ${s.text}`;
+          })
+          .join('\n');
+
+        const status = result.data.is_active ? '(LIVE)' : '(ended)';
+        setContext(`[Meeting Transcript ${status} - ${result.data.segments.length} segments]\n${fullText}`);
+        showSystemMessage(`Loaded ${result.data.segments.length} transcript segments as context.`);
+      } else {
+        showSystemMessage(result.error || 'No transcript available. Start live transcription first.');
+      }
+    } catch (err) {
+      showSystemMessage('Error loading transcript: ' + err.message);
+    }
+    btnTranscript.textContent = '🎙 Meeting';
+    btnTranscript.disabled = false;
   });
 
   // Paste clipboard button
@@ -426,6 +454,15 @@ function attachCopyButtons(container) {
     pre.style.position = 'relative';
     pre.appendChild(btn);
   });
+}
+
+// ═══ Transcript Helpers ═══════════════════════════════════
+function formatTranscriptTime(seconds) {
+  if (typeof seconds !== 'number' || isNaN(seconds)) return '00:00:00';
+  const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
+  const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+  const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+  return `${h}:${m}:${s}`;
 }
 
 // ═══ Start App ═════════════════════════════════════════════

@@ -1,8 +1,9 @@
 {
   "whisper_model": "base",
-  "language": "auto",
+  "language": "en",
   "device": "auto",
   "window_opacity": 0.95,
   "always_on_top": true,
-  "buffer_duration": 10
+  "buffer_duration": 10,
+  "overlap_seconds": 2
 }

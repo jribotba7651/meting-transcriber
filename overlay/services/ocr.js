@@ -1,9 +1,10 @@
 const { createWorker } = require('tesseract.js');
 const screenshot = require('screenshot-desktop');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
-// ─── Local paths for air-gapped operation (F-OCR-001 fix) ───
-// All Tesseract assets are bundled locally — zero CDN calls.
+// --- Local paths for air-gapped operation ---
 const TESSDATA_PATH = path.join(__dirname, 'tessdata');
 const WORKER_PATH = path.join(__dirname, '..', 'node_modules', 'tesseract.js', 'dist', 'worker.min.js');
 const CORE_PATH = path.join(__dirname, '..', 'node_modules', 'tesseract.js-core');
@@ -15,10 +16,6 @@ class OCRService {
     this.isInitializing = false;
   }
 
-  /**
-   * Pre-initialize the Tesseract worker for faster first OCR call.
-   * All models loaded from local filesystem — no network access.
-   */
   async initialize() {
     if (this.isReady || this.isInitializing) return;
     this.isInitializing = true;
@@ -28,12 +25,12 @@ class OCRService {
         workerPath: WORKER_PATH,
         corePath: CORE_PATH,
         langPath: TESSDATA_PATH,
-        gzip: false,           // Our .traineddata files are not gzipped
-        cacheMethod: 'none',   // Don't cache — we already have local files
-        logging: false,        // Suppress verbose logging
+        gzip: false,
+        cacheMethod: 'none',
+        logging: false,
       });
       this.isReady = true;
-      console.log('OCR worker initialized (local tessdata, no CDN)');
+      console.log('OCR worker initialized (local tessdata)');
     } catch (err) {
       console.error('Failed to initialize OCR worker:', err);
       this.isReady = false;
@@ -43,17 +40,35 @@ class OCRService {
   }
 
   /**
-   * Capture screenshot and extract text via OCR
-   * @param {BrowserWindow} overlayWindow - The overlay window to hide during capture
-   * @returns {Promise<string>} Extracted text
+   * Capture screenshot using screenshot-desktop (native, reliable on Windows).
+   * Saves to temp file and returns the path.
+   */
+  async captureScreen() {
+    const tmpPath = path.join(os.tmpdir(), `ocr_capture_${Date.now()}.png`);
+    try {
+      await screenshot({ filename: tmpPath });
+      const buffer = fs.readFileSync(tmpPath);
+      // Clean up temp file
+      try { fs.unlinkSync(tmpPath); } catch (e) { /* ignore */ }
+      return buffer;
+    } catch (err) {
+      try { fs.unlinkSync(tmpPath); } catch (e) { /* ignore */ }
+      throw new Error('Screenshot capture failed: ' + err.message);
+    }
+  }
+
+  /**
+   * Capture screenshot and extract text via OCR.
+   * Hides overlay during capture so it doesn't appear in the screenshot.
    */
   async captureAndRecognize(overlayWindow = null) {
     if (!this.isReady) {
+      console.log('OCR: Initializing worker on first use...');
       await this.initialize();
     }
 
     if (!this.worker) {
-      throw new Error('OCR engine failed to initialize. Restart the app.');
+      throw new Error('OCR engine failed to initialize. Check tessdata files.');
     }
 
     // Hide overlay so it doesn't appear in screenshot
@@ -64,9 +79,9 @@ class OCRService {
 
     let imgBuffer;
     try {
-      imgBuffer = await screenshot({ format: 'png' });
+      imgBuffer = await this.captureScreen();
+      console.log(`OCR: Screenshot captured (${imgBuffer.length} bytes)`);
     } catch (err) {
-      // Re-show overlay before throwing
       if (overlayWindow) overlayWindow.show();
       throw new Error('Could not capture screen: ' + err.message);
     }
@@ -79,26 +94,20 @@ class OCRService {
     try {
       const { data: { text } } = await this.worker.recognize(imgBuffer);
       const cleaned = text.trim();
+      console.log(`OCR: Extracted ${cleaned.length} characters`);
       if (!cleaned) {
         throw new Error('No text detected in screenshot.');
       }
       return cleaned;
     } catch (err) {
       if (err.message.includes('No text detected')) throw err;
-      throw new Error('OCR failed: ' + err.message);
+      throw new Error('OCR recognition failed: ' + err.message);
     }
   }
 
-  /**
-   * Clean up the Tesseract worker
-   */
   async terminate() {
     if (this.worker) {
-      try {
-        await this.worker.terminate();
-      } catch (e) {
-        // ignore termination errors
-      }
+      try { await this.worker.terminate(); } catch (e) { /* ignore */ }
       this.worker = null;
       this.isReady = false;
     }
