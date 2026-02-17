@@ -57,4 +57,13 @@ Thumbs.db
 overlay/node_modules/
 overlay/dist/
 overlay/chat_history.json
+overlay/*.traineddata
 nul
+
+# Scratch diagnostic scripts (keep test_audio_quick.py and diagnose_pipeline.py)
+diagnose.py
+diagnose[0-9].py
+diagnose[0-9][0-9].py
+
+# Claude Code
+.claude/

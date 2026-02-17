@@ -19,7 +19,12 @@ logger = logging.getLogger(__name__)
 
 
 class DeviceStream:
-    """Manages a single loopback device stream and its per-device callback."""
+    """Manages a single loopback device stream with blocking reads in a dedicated thread.
+
+    Uses blocking reads instead of callbacks because pyaudiowpatch callbacks
+    produce 0 data on some WASAPI loopback configurations (confirmed on
+    Windows 11 with Realtek drivers).
+    """
 
     def __init__(self, device_index, device_name, channels, native_rate, audio_queue, pa_instance, chunk_size):
         self.device_index = device_index
@@ -30,9 +35,11 @@ class DeviceStream:
         self.pa = pa_instance
         self.chunk_size = chunk_size
         self.stream = None
+        self._running = False
+        self._read_thread = None
 
     def start(self):
-        """Open and start the PyAudio stream for this device."""
+        """Open the PyAudio stream and start a blocking-read thread."""
         try:
             self.stream = self.pa.open(
                 format=pyaudio.paInt16,
@@ -41,38 +48,46 @@ class DeviceStream:
                 input=True,
                 input_device_index=self.device_index,
                 frames_per_buffer=self.chunk_size,
-                stream_callback=self._callback
             )
             self.stream.start_stream()
+            self._running = True
+            self._read_thread = threading.Thread(
+                target=self._read_loop, daemon=True,
+                name=f"audio-read-{self.device_name}"
+            )
+            self._read_thread.start()
             logger.info(f"  ✓ Opened: {self.device_name} ({self.native_rate} Hz, {self.channels}ch)")
             return True
         except Exception as e:
             logger.warning(f"  ✗ Could not open {self.device_name}: {e}")
             return False
 
-    def _callback(self, in_data, frame_count, time_info, status):
-        """PyAudio stream callback — converts to mono float32 at native rate and queues."""
-        if status:
-            logger.debug(f"Audio status [{self.device_name}]: {status}")
+    def _read_loop(self):
+        """Blocking read loop — reads audio and queues it for processing."""
+        frames_per_read = self.native_rate // 10  # read ~100ms at a time
+        while self._running and self.stream and self.stream.is_active():
+            try:
+                in_data = self.stream.read(frames_per_read, exception_on_overflow=False)
+                audio_data = np.frombuffer(in_data, dtype=np.int16)
+                audio_float = audio_data.astype(np.float32) / 32768.0
 
-        try:
-            audio_data = np.frombuffer(in_data, dtype=np.int16)
+                if self.channels >= 2:
+                    audio_float = audio_float.reshape(-1, self.channels).mean(axis=1)
 
-            # Convert to float32 normalized first, then mono (avoids int16 truncation)
-            audio_float = audio_data.astype(np.float32) / 32768.0
-
-            if self.channels >= 2:
-                audio_float = audio_float.reshape(-1, self.channels).mean(axis=1)
-
-            # Tag with native sample rate so the mixer can resample
-            self.audio_queue.put((audio_float, self.native_rate))
-        except Exception as e:
-            logger.warning(f"Callback error [{self.device_name}]: {e}")
-
-        return (in_data, pyaudio.paContinue)
+                self.audio_queue.put((audio_float, self.native_rate))
+            except OSError:
+                # Stream closed or device disconnected
+                break
+            except Exception as e:
+                if self._running:
+                    logger.warning(f"Read error [{self.device_name}]: {e}")
 
     def stop(self):
-        """Stop and close the stream."""
+        """Stop the read thread and close the stream."""
+        self._running = False
+        if self._read_thread:
+            self._read_thread.join(timeout=3)
+            self._read_thread = None
         if self.stream:
             try:
                 self.stream.stop_stream()
