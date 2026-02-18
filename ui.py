@@ -10,7 +10,7 @@ import json
 import os
 from datetime import datetime
 import threading
-from threading import Lock
+from threading import Lock, Event
 import time
 
 
@@ -44,6 +44,10 @@ class TranscriberUI:
         self.live_segment_offset = 0.0
         self._offset_lock = Lock()
         self._chunk_counter = 0  # monotonic chunk counter for correct offset
+
+        # File transcription control
+        self._file_stop_event = Event()
+        self._file_pause_event = Event()  # set = paused
 
         # Shared transcript file for overlay integration
         self.live_transcript_dir = os.path.join(
@@ -128,6 +132,26 @@ class TranscriberUI:
             width=22
         )
         self.upload_btn.grid(row=0, column=0, padx=(0, 5))
+
+        # Pause button (hidden until transcription starts)
+        self.pause_btn = ttk.Button(
+            action_frame,
+            text="\u23f8 Pause",
+            command=self._toggle_pause,
+            width=10
+        )
+        self.pause_btn.grid(row=0, column=1, padx=(0, 5))
+        self.pause_btn.grid_remove()
+
+        # Stop button (hidden until transcription starts)
+        self.stop_btn = ttk.Button(
+            action_frame,
+            text="\u26d4 Stop Hallucinating",
+            command=self._stop_file_transcription,
+            width=20
+        )
+        self.stop_btn.grid(row=0, column=2, padx=(0, 5))
+        self.stop_btn.grid_remove()
 
         # --- Status Frame ---
         status_frame = ttk.Frame(main_frame)
@@ -529,8 +553,13 @@ class TranscriberUI:
                 self._update_status("Ready \u2014 Upload a file to transcribe")
                 return
 
-        # Disable buttons during processing
+        # Disable upload, show stop/pause buttons
         self.upload_btn.config(state='disabled')
+        self._file_stop_event.clear()
+        self._file_pause_event.clear()
+        self.pause_btn.config(text="\u23f8 Pause")
+        self.pause_btn.grid()
+        self.stop_btn.grid()
 
         # Show progress bar
         self.progress_bar['value'] = 0
@@ -574,12 +603,23 @@ class TranscriberUI:
                     elif status.startswith("Loading"):
                         self.root.after(0, _update_progress_bar, 5)
 
-            segments = self.transcriber.transcribe_file(file_path, progress_callback=on_progress)
+            segments = self.transcriber.transcribe_file(
+                file_path, progress_callback=on_progress,
+                stop_event=self._file_stop_event,
+                pause_event=self._file_pause_event,
+            )
 
             def show_results():
                 self.progress_bar.grid_remove()
+                stopped = self._file_stop_event.is_set()
 
-                if segments:
+                if stopped and segments:
+                    self.text_area.insert(tk.END, f"\n--- Stopped: {filename} ({len(segments)} segments) ---\n\n")
+                    self.text_area.see(tk.END)
+                    self._update_status(f"Stopped - {len(segments)} segments from {filename}")
+                elif stopped:
+                    self._update_status("Stopped")
+                elif segments:
                     self.text_area.insert(tk.END, f"\n--- End of {filename} ---\n\n")
                     self.text_area.see(tk.END)
                     self._update_status(f"Done - {len(segments)} segments from {filename}")
@@ -593,11 +633,32 @@ class TranscriberUI:
                     self._update_status("Ready \u2014 Upload a file to transcribe")
 
                 self.upload_btn.config(state='normal')
+                self.pause_btn.grid_remove()
+                self.stop_btn.grid_remove()
 
             self.root.after(0, show_results)
 
         thread = threading.Thread(target=process_file, daemon=True)
         thread.start()
+
+    # --- File Transcription Controls ---
+
+    def _toggle_pause(self):
+        """Toggle pause/resume for file transcription"""
+        if self._file_pause_event.is_set():
+            self._file_pause_event.clear()
+            self.pause_btn.config(text="\u23f8 Pause")
+            self._update_status("Resumed...")
+        else:
+            self._file_pause_event.set()
+            self.pause_btn.config(text="\u25b6 Resume")
+            self._update_status("Paused")
+
+    def _stop_file_transcription(self):
+        """Stop file transcription (stop hallucinating)"""
+        self._file_stop_event.set()
+        self._file_pause_event.clear()  # unblock if paused
+        self._update_status("Stopping...")
 
     # --- Window Controls ---
 

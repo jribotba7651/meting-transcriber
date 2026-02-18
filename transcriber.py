@@ -193,7 +193,8 @@ class Transcriber:
             finally:
                 self.is_transcribing = False
 
-    def transcribe_file(self, file_path, progress_callback=None):
+    def transcribe_file(self, file_path, progress_callback=None,
+                        stop_event=None, pause_event=None):
         """
         Transcribe an audio or video file.
 
@@ -205,6 +206,8 @@ class Transcriber:
             file_path: Path to audio/video file
             progress_callback: Optional callback for status updates.
                 Receives strings like "Processing..." or "__segment__start|end|text"
+            stop_event: threading.Event — set to abort transcription
+            pause_event: threading.Event — set to pause between chunks
 
         Returns:
             List of segment dicts with 'start', 'end', 'text' keys
@@ -293,6 +296,27 @@ class Transcriber:
             total_chunks = max(1, int(np.ceil(len(audio_data) / chunk_samples)))
 
             for i in range(total_chunks):
+                # Check stop
+                if stop_event and stop_event.is_set():
+                    logger.info("Transcription stopped by user")
+                    if progress_callback:
+                        progress_callback(
+                            f"Stopped - {len(all_segments)} segments so far"
+                        )
+                    return all_segments
+
+                # Check pause — wait until unpaused or stopped
+                while pause_event and pause_event.is_set():
+                    if stop_event and stop_event.is_set():
+                        logger.info("Transcription stopped while paused")
+                        if progress_callback:
+                            progress_callback(
+                                f"Stopped - {len(all_segments)} segments so far"
+                            )
+                        return all_segments
+                    import time
+                    time.sleep(0.2)
+
                 start_sample = i * chunk_samples
                 end_sample = min((i + 1) * chunk_samples, len(audio_data))
                 chunk = audio_data[start_sample:end_sample]
