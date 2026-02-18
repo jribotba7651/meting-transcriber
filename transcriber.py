@@ -193,9 +193,53 @@ class Transcriber:
             finally:
                 self.is_transcribing = False
 
+    def _extract_audio_ffmpeg(self, video_path, output_path):
+        """Extract audio from video using ffmpeg directly.
+
+        Returns True on success, False on failure.
+        """
+        import subprocess
+        try:
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-y", "-i", video_path,
+                    "-vn",          # no video
+                    "-acodec", "pcm_s16le",
+                    "-ar", "16000", # 16kHz for Whisper
+                    "-ac", "1",     # mono
+                    output_path,
+                ],
+                capture_output=True,
+                timeout=300,
+            )
+            return result.returncode == 0
+        except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
+            logger.warning(f"ffmpeg extraction failed: {e}")
+            return False
+
+    def _extract_audio_moviepy(self, video_path, output_path):
+        """Extract audio from video using MoviePy as fallback.
+
+        Returns True on success, False on failure.
+        """
+        if VideoFileClip is None:
+            return False
+        try:
+            video = VideoFileClip(video_path)
+            video.audio.write_audiofile(output_path, verbose=False, logger=None)
+            video.close()
+            return True
+        except Exception as e:
+            logger.warning(f"MoviePy extraction failed: {e}")
+            return False
+
     def transcribe_file(self, file_path, progress_callback=None):
         """
         Transcribe an audio or video file.
+
+        Whisper uses ffmpeg internally so it can handle most video/audio
+        formats directly.  If direct transcription fails for a video file,
+        we fall back to explicit audio extraction (ffmpeg CLI, then MoviePy).
 
         Args:
             file_path: Path to audio/video file
@@ -214,32 +258,13 @@ class Transcriber:
             audio_path = file_path
             temp_audio = None
 
-            # Extract audio from video files
             video_exts = ('.mp4', '.mkv', '.avi', '.webm', '.mov', '.wmv')
-            if file_path.lower().endswith(video_exts):
-                if VideoFileClip is None:
-                    if progress_callback:
-                        progress_callback("Error: moviepy not installed for video processing")
-                    return []
-
-                if progress_callback:
-                    progress_callback("Extracting audio from video...")
-
-                try:
-                    video = VideoFileClip(file_path)
-                    temp_audio = os.path.join(tempfile.gettempdir(), "meeting_audio_temp.wav")
-                    video.audio.write_audiofile(temp_audio, verbose=False, logger=None)
-                    video.close()
-                    audio_path = temp_audio
-                except Exception as e:
-                    if progress_callback:
-                        progress_callback(f"Error: Failed to extract audio: {e}")
-                    return []
+            is_video = file_path.lower().endswith(video_exts)
 
             if progress_callback:
                 progress_callback("Transcribing... (this may take a while)")
 
-            # Transcribe with same optimized settings
+            # Transcribe with optimized settings
             decode_options = {
                 "beam_size": 1,
                 "best_of": 1,
@@ -248,12 +273,49 @@ class Transcriber:
             if self.language:
                 decode_options["language"] = self.language
 
-            result = self.model.transcribe(
-                audio_path,
-                fp16=False,
-                verbose=False,
-                **decode_options,
-            )
+            # First attempt: pass the file directly to Whisper (works for
+            # any format that ffmpeg can decode, including .mp4).
+            result = None
+            try:
+                result = self.model.transcribe(
+                    audio_path,
+                    fp16=False,
+                    verbose=False,
+                    **decode_options,
+                )
+            except Exception as e:
+                logger.warning(f"Direct transcription failed: {e}")
+
+                # Fallback: extract audio explicitly for video files
+                if is_video:
+                    if progress_callback:
+                        progress_callback("Extracting audio from video...")
+
+                    temp_audio = os.path.join(
+                        tempfile.gettempdir(), "meeting_audio_temp.wav"
+                    )
+
+                    extracted = self._extract_audio_ffmpeg(file_path, temp_audio)
+                    if not extracted:
+                        extracted = self._extract_audio_moviepy(file_path, temp_audio)
+
+                    if not extracted:
+                        if progress_callback:
+                            progress_callback(
+                                "Error: Could not extract audio. "
+                                "Please install ffmpeg or moviepy."
+                            )
+                        return []
+
+                    audio_path = temp_audio
+                    result = self.model.transcribe(
+                        audio_path,
+                        fp16=False,
+                        verbose=False,
+                        **decode_options,
+                    )
+                else:
+                    raise  # re-raise for non-video files
 
             segments = []
             for seg in result.get("segments", []):

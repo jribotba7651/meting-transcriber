@@ -550,11 +550,13 @@ class TranscriberUI:
                     self.text_area.insert(tk.END, f"\n--- End of {filename} ---\n\n")
                     self.text_area.see(tk.END)
                     self._update_status(f"Done - {len(segments)} segments from {filename}")
-                elif not error_msg:
-                    messagebox.showwarning("Warning", "No transcription segments were generated.\n\n"
-                                           "Check the terminal for more details.")
+                elif error_msg:
+                    messagebox.showerror("Transcription Error",
+                                         f"Failed to transcribe {filename}:\n\n{error_msg}")
                     self._update_status("Ready \u2014 Upload a file or start live transcription")
                 else:
+                    messagebox.showwarning("Warning", "No transcription segments were generated.\n\n"
+                                           "Check the terminal for more details.")
                     self._update_status("Ready \u2014 Upload a file or start live transcription")
 
                 self.upload_btn.config(state='normal')
