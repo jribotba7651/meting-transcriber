@@ -153,6 +153,16 @@ class TranscriberUI:
         )
         self.status_label.grid(row=0, column=0, sticky=(tk.W, tk.E))
 
+        # Progress bar (hidden by default, shown during file transcription)
+        self.progress_bar = ttk.Progressbar(
+            status_frame,
+            orient=tk.HORIZONTAL,
+            mode='determinate',
+            length=200,
+        )
+        self.progress_bar.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(4, 0))
+        self.progress_bar.grid_remove()  # hidden until needed
+
         # --- Transcription Frame ---
         trans_frame = ttk.LabelFrame(main_frame, text="Transcription", padding="5")
         trans_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
@@ -522,6 +532,10 @@ class TranscriberUI:
         self.upload_btn.config(state='disabled')
         self.live_btn.config(state='disabled')
 
+        # Show progress bar
+        self.progress_bar['value'] = 0
+        self.progress_bar.grid()
+
         # Show header
         filename = os.path.basename(file_path)
         self.text_area.insert(tk.END, f"--- Transcription: {filename} ---\n\n")
@@ -529,6 +543,9 @@ class TranscriberUI:
 
         def process_file():
             error_msg = None
+
+            def _update_progress_bar(value):
+                self.progress_bar['value'] = value
 
             def on_progress(status):
                 nonlocal error_msg
@@ -542,10 +559,26 @@ class TranscriberUI:
                         self.root.after(0, self._add_transcription_segment, seg)
                 else:
                     self.root.after(0, self._update_status, status)
+                    # Parse "Transcribing chunk X/Y ..." to update progress bar
+                    if status.startswith("Transcribing chunk "):
+                        try:
+                            parts = status.split()[2].split("/")
+                            current = int(parts[0])
+                            total = int(parts[1])
+                            pct = (current / total) * 100
+                            self.root.after(0, _update_progress_bar, pct)
+                        except (IndexError, ValueError):
+                            pass
+                    elif status.startswith("Extracting"):
+                        self.root.after(0, _update_progress_bar, 0)
+                    elif status.startswith("Loading"):
+                        self.root.after(0, _update_progress_bar, 5)
 
             segments = self.transcriber.transcribe_file(file_path, progress_callback=on_progress)
 
             def show_results():
+                self.progress_bar.grid_remove()
+
                 if segments:
                     self.text_area.insert(tk.END, f"\n--- End of {filename} ---\n\n")
                     self.text_area.see(tk.END)
