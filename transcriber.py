@@ -193,53 +193,14 @@ class Transcriber:
             finally:
                 self.is_transcribing = False
 
-    def _extract_audio_ffmpeg(self, video_path, output_path):
-        """Extract audio from video using ffmpeg directly.
-
-        Returns True on success, False on failure.
-        """
-        import subprocess
-        try:
-            result = subprocess.run(
-                [
-                    "ffmpeg", "-y", "-i", video_path,
-                    "-vn",          # no video
-                    "-acodec", "pcm_s16le",
-                    "-ar", "16000", # 16kHz for Whisper
-                    "-ac", "1",     # mono
-                    output_path,
-                ],
-                capture_output=True,
-                timeout=300,
-            )
-            return result.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
-            logger.warning(f"ffmpeg extraction failed: {e}")
-            return False
-
-    def _extract_audio_moviepy(self, video_path, output_path):
-        """Extract audio from video using MoviePy as fallback.
-
-        Returns True on success, False on failure.
-        """
-        if VideoFileClip is None:
-            return False
-        try:
-            video = VideoFileClip(video_path)
-            video.audio.write_audiofile(output_path, verbose=False, logger=None)
-            video.close()
-            return True
-        except Exception as e:
-            logger.warning(f"MoviePy extraction failed: {e}")
-            return False
-
     def transcribe_file(self, file_path, progress_callback=None):
         """
         Transcribe an audio or video file.
 
-        Whisper uses ffmpeg internally so it can handle most video/audio
-        formats directly.  If direct transcription fails for a video file,
-        we fall back to explicit audio extraction (ffmpeg CLI, then MoviePy).
+        Uses MoviePy (which bundles its own ffmpeg) to extract audio to a
+        16 kHz PCM WAV, then reads it with the stdlib `wave` module and
+        feeds numpy arrays to Whisper.  This avoids any dependency on a
+        system-installed ffmpeg.
 
         Args:
             file_path: Path to audio/video file
@@ -254,103 +215,135 @@ class Transcriber:
                 progress_callback("Error: Model not loaded")
             return []
 
-        try:
-            audio_path = file_path
-            temp_audio = None
+        video_exts = {'.mp4', '.mkv', '.avi', '.webm', '.mov', '.wmv'}
+        audio_exts = {'.mp3', '.wav', '.m4a', '.ogg', '.flac', '.wma'}
+        ext = os.path.splitext(file_path)[1].lower()
 
-            video_exts = ('.mp4', '.mkv', '.avi', '.webm', '.mov', '.wmv')
-            is_video = file_path.lower().endswith(video_exts)
+        if VideoFileClip is None:
+            if progress_callback:
+                progress_callback(
+                    "Error: moviepy is not installed. "
+                    "Run:  pip install moviepy"
+                )
+            return []
+
+        clip = None
+        tmp_wav = None
+        try:
+            if progress_callback:
+                progress_callback("Extracting audio...")
+
+            tmp_wav = tempfile.mktemp(suffix='.wav')
+            logger.info(f"Extracting audio from: {file_path} (format: {ext})")
+
+            if ext in video_exts:
+                clip = VideoFileClip(file_path)
+                if clip.audio is None:
+                    if progress_callback:
+                        progress_callback("Error: Video has no audio track")
+                    return []
+                clip.audio.write_audiofile(
+                    tmp_wav, fps=16000, nbytes=2, codec='pcm_s16le',
+                )
+            elif ext in audio_exts:
+                clip = AudioFileClip(file_path)
+                clip.write_audiofile(
+                    tmp_wav, fps=16000, nbytes=2, codec='pcm_s16le',
+                )
+            else:
+                if progress_callback:
+                    progress_callback(f"Error: Unsupported format {ext}")
+                return []
+
+            logger.info(f"Audio extracted to temp file: {tmp_wav}")
 
             if progress_callback:
-                progress_callback("Transcribing... (this may take a while)")
+                progress_callback("Loading audio data...")
 
-            # Transcribe with optimized settings
-            decode_options = {
-                "beam_size": 1,
-                "best_of": 1,
-                "temperature": 0.0,
-            }
-            if self.language:
-                decode_options["language"] = self.language
+            # Read the WAV with stdlib — no ffmpeg needed
+            import wave
+            with wave.open(tmp_wav, 'rb') as wf:
+                n_channels = wf.getnchannels()
+                n_frames = wf.getnframes()
+                framerate = wf.getframerate()
+                raw_data = wf.readframes(n_frames)
 
-            # First attempt: pass the file directly to Whisper (works for
-            # any format that ffmpeg can decode, including .mp4).
-            result = None
-            try:
-                result = self.model.transcribe(
-                    audio_path,
-                    fp16=False,
-                    verbose=False,
-                    **decode_options,
-                )
-            except Exception as e:
-                logger.warning(f"Direct transcription failed: {e}")
+            logger.info(
+                f"WAV: channels={n_channels}, rate={framerate}, frames={n_frames}"
+            )
 
-                # Fallback: extract audio explicitly for video files
-                if is_video:
-                    if progress_callback:
-                        progress_callback("Extracting audio from video...")
+            audio_data = (
+                np.frombuffer(raw_data, dtype=np.int16)
+                .astype(np.float32) / 32768.0
+            )
+            if n_channels > 1:
+                audio_data = audio_data.reshape(-1, n_channels).mean(axis=1)
 
-                    temp_audio = os.path.join(
-                        tempfile.gettempdir(), "meeting_audio_temp.wav"
+            if len(audio_data) == 0:
+                if progress_callback:
+                    progress_callback("Error: No audio data extracted")
+                return []
+
+            total_duration = len(audio_data) / 16000.0
+            logger.info(f"File audio: {len(audio_data)} samples ({total_duration:.1f}s)")
+
+            # Transcribe in 120-second chunks for quality + streaming
+            chunk_seconds = 120
+            chunk_samples = chunk_seconds * 16000
+            all_segments = []
+            total_chunks = max(1, int(np.ceil(len(audio_data) / chunk_samples)))
+
+            for i in range(total_chunks):
+                start_sample = i * chunk_samples
+                end_sample = min((i + 1) * chunk_samples, len(audio_data))
+                chunk = audio_data[start_sample:end_sample]
+
+                chunk_start_sec = start_sample / 16000.0
+                chunk_end_sec = end_sample / 16000.0
+
+                if progress_callback:
+                    progress_callback(
+                        f"Transcribing chunk {i + 1}/{total_chunks} "
+                        f"({chunk_start_sec:.0f}s\u2013{chunk_end_sec:.0f}s "
+                        f"of {total_duration:.0f}s)"
                     )
 
-                    extracted = self._extract_audio_ffmpeg(file_path, temp_audio)
-                    if not extracted:
-                        extracted = self._extract_audio_moviepy(file_path, temp_audio)
+                segments = self.transcribe_audio(chunk)
 
-                    if not extracted:
-                        if progress_callback:
-                            progress_callback(
-                                "Error: Could not extract audio. "
-                                "Please install ffmpeg or moviepy."
-                            )
-                        return []
+                for seg in segments:
+                    seg['start'] += chunk_start_sec
+                    seg['end'] += chunk_start_sec
+                    all_segments.append(seg)
 
-                    audio_path = temp_audio
-                    result = self.model.transcribe(
-                        audio_path,
-                        fp16=False,
-                        verbose=False,
-                        **decode_options,
-                    )
-                else:
-                    raise  # re-raise for non-video files
-
-            segments = []
-            for seg in result.get("segments", []):
-                text = seg["text"].strip()
-                if text:
-                    segment = {
-                        "start": seg["start"],
-                        "end": seg["end"],
-                        "text": text,
-                    }
-                    segments.append(segment)
-
-                    # Stream segments to UI as they're processed
                     if progress_callback:
                         progress_callback(
-                            f"__segment__{seg['start']:.2f}|{seg['end']:.2f}|{text}"
+                            f"__segment__{seg['start']:.2f}|{seg['end']:.2f}|{seg['text']}"
                         )
 
-            # Cleanup temp file
-            if temp_audio and os.path.exists(temp_audio):
-                try:
-                    os.remove(temp_audio)
-                except OSError:
-                    pass
-
             if progress_callback:
-                progress_callback(f"Done - {len(segments)} segments")
+                progress_callback(
+                    f"Done - {len(all_segments)} segments from {total_duration:.0f}s"
+                )
 
-            return segments
+            return all_segments
 
         except Exception as e:
-            logger.error(f"File transcription error: {e}")
+            logger.error(f"Error transcribing file: {e}", exc_info=True)
             if progress_callback:
                 progress_callback(f"Error: {e}")
             return []
+
+        finally:
+            if clip is not None:
+                try:
+                    clip.close()
+                except Exception:
+                    pass
+            if tmp_wav and os.path.exists(tmp_wav):
+                try:
+                    os.remove(tmp_wav)
+                except OSError:
+                    pass
 
     @staticmethod
     def format_timestamp(seconds):
