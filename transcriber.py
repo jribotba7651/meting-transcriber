@@ -1,10 +1,11 @@
 """
 Transcriber Module
-Optimized audio transcription using OpenAI Whisper.
-- Greedy decoding (beam_size=1) for ~2-3x faster inference
+Optimized audio transcription using faster-whisper (CTranslate2).
+- INT8 quantized inference for ~4x faster CPU performance
+- Greedy decoding (beam_size=1) for additional speed
 - Fixed language eliminates auto-detection overhead
-- Silero VAD pre-filters silence to avoid hallucinations
-- Reduced buffer (10s) for near-real-time display
+- Built-in Silero VAD for file transcription
+- Energy-based silence detection for live streaming
 """
 
 import os
@@ -15,9 +16,9 @@ from threading import Thread, Lock
 import numpy as np
 
 try:
-    import whisper
+    from faster_whisper import WhisperModel
 except ImportError:
-    whisper = None
+    WhisperModel = None
 
 try:
     from moviepy import VideoFileClip, AudioFileClip
@@ -32,64 +33,26 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# --------------- Silero VAD helper ---------------
-_vad_model = None
+def _is_silent(audio_float32_16k, threshold=0.005):
+    """Quick energy-based silence check for live audio chunks.
 
-def _get_vad_model():
-    """Lazy-load Silero VAD model (tiny, runs in <5ms)."""
-    global _vad_model
-    if _vad_model is None:
-        try:
-            import torch
-            model, _ = torch.hub.load(
-                repo_or_dir='snakers4/silero-vad',
-                model='silero_vad',
-                force_reload=False,
-                trust_repo=True,
-                source='github',
-            )
-            _vad_model = model
-            logger.info("Silero VAD model loaded")
-        except Exception as e:
-            logger.warning(f"Could not load Silero VAD: {e}. Falling back to energy-based VAD.")
-    return _vad_model
+    For file transcription, faster-whisper's built-in vad_filter
+    handles silence filtering. This is only used for live streaming
+    to skip completely silent chunks before calling transcribe().
 
-
-def _has_speech(audio_float32_16k, threshold=0.3):
-    """Check if audio contains speech using Silero VAD or energy fallback.
-    
     Args:
         audio_float32_16k: float32 numpy array at 16kHz
-        threshold: VAD probability threshold (0.0-1.0)
-    
-    Returns:
-        True if speech detected, False if silence/noise only
-    """
-    vad = _get_vad_model()
-    if vad is not None:
-        try:
-            import torch
-            # Silero VAD expects 512-sample windows at 16kHz
-            # Check a few windows spread across the audio
-            audio_tensor = torch.from_numpy(audio_float32_16k)
-            window = 512
-            step = max(window, len(audio_tensor) // 20)  # ~20 samples
-            for start in range(0, len(audio_tensor) - window, step):
-                chunk = audio_tensor[start:start + window]
-                prob = vad(chunk, 16000).item()
-                if prob > threshold:
-                    return True
-            return False
-        except Exception as e:
-            logger.debug(f"VAD error: {e}")
+        threshold: RMS energy threshold
 
-    # Energy-based fallback
+    Returns:
+        True if audio is silent (below threshold)
+    """
     rms = np.sqrt(np.mean(audio_float32_16k ** 2))
-    return rms > 0.005
+    return rms < threshold
 
 
 class Transcriber:
-    def __init__(self, model_size="base", device="auto", language="auto"):
+    def __init__(self, model_size="base", device="auto", language="auto", compute_type="auto"):
         """
         Initialize transcriber with optimized settings.
 
@@ -97,11 +60,13 @@ class Transcriber:
             model_size: Whisper model size (tiny, base, small, medium, large)
             device: Device to use (auto, cpu, cuda)
             language: Language code (en, es) or auto for auto-detect
+            compute_type: CTranslate2 compute type (auto, int8, float16, float32)
         """
         self.model_size = model_size
         self.language = None if language == "auto" else language
         self.model = None
         self.device = self._determine_device(device)
+        self.compute_type = self._determine_compute_type(compute_type, self.device)
         self.transcription_lock = Lock()
         self.is_transcribing = False
 
@@ -118,13 +83,30 @@ class Transcriber:
             return "cpu"
         return device_preference
 
+    def _determine_compute_type(self, compute_type, device):
+        """Select optimal compute type for the device."""
+        if compute_type != "auto":
+            return compute_type
+        if device == "cuda":
+            return "float16"
+        return "int8"  # fastest on CPU
+
     def load_model(self):
-        """Load the Whisper model"""
-        if whisper is None:
-            raise ImportError("openai-whisper not installed.")
+        """Load the Whisper model using faster-whisper (CTranslate2)."""
+        if WhisperModel is None:
+            raise ImportError(
+                "faster-whisper not installed. Run: pip install faster-whisper"
+            )
         try:
-            logger.info(f"Loading Whisper model: {self.model_size} on {self.device}")
-            self.model = whisper.load_model(self.model_size, device=self.device)
+            logger.info(
+                f"Loading Whisper model: {self.model_size} on {self.device} "
+                f"(compute_type={self.compute_type})"
+            )
+            self.model = WhisperModel(
+                self.model_size,
+                device=self.device,
+                compute_type=self.compute_type,
+            )
             logger.info(f"Model loaded successfully on {self.device}")
             return True
         except Exception as e:
@@ -135,7 +117,7 @@ class Transcriber:
     def transcribe_audio(self, audio_data):
         """
         Transcribe a numpy audio chunk (float32, 16kHz).
-        Uses VAD to skip silence and greedy decoding for speed.
+        Uses energy-based silence detection to skip empty chunks.
 
         Args:
             audio_data: numpy float32 array at 16kHz sample rate
@@ -150,38 +132,35 @@ class Transcriber:
         if audio_data.dtype != np.float32:
             audio_data = audio_data.astype(np.float32)
 
-        # VAD check: skip silence to avoid Whisper hallucinations
-        if not _has_speech(audio_data):
+        # Energy-based silence check: skip empty chunks to save CPU
+        if _is_silent(audio_data):
             logger.debug("No speech detected, skipping chunk")
             return []
 
         with self.transcription_lock:
             self.is_transcribing = True
             try:
-                # Greedy decoding (beam_size=1) is ~2-3x faster than default beam=5
-                decode_options = {
+                options = {
                     "beam_size": 1,
-                    "best_of": 1,
                     "temperature": 0.0,
                     "no_speech_threshold": 0.6,
                     "compression_ratio_threshold": 2.4,
+                    "vad_filter": False,  # live chunks already pre-filtered
                 }
                 if self.language:
-                    decode_options["language"] = self.language
+                    options["language"] = self.language
 
-                result = self.model.transcribe(
-                    audio_data,
-                    fp16=False,
-                    **decode_options,
+                segments_gen, info = self.model.transcribe(
+                    audio_data, **options
                 )
 
                 segments = []
-                for seg in result.get("segments", []):
-                    text = seg["text"].strip()
+                for seg in segments_gen:
+                    text = seg.text.strip()
                     if text:
                         segments.append({
-                            "start": seg["start"],
-                            "end": seg["end"],
+                            "start": seg.start,
+                            "end": seg.end,
                             "text": text,
                         })
 
@@ -199,8 +178,7 @@ class Transcriber:
 
         Uses MoviePy (which bundles its own ffmpeg) to extract audio to a
         16 kHz PCM WAV, then reads it with the stdlib `wave` module and
-        feeds numpy arrays to Whisper.  This avoids any dependency on a
-        system-installed ffmpeg.
+        feeds numpy arrays to faster-whisper.
 
         Args:
             file_path: Path to audio/video file
@@ -287,7 +265,7 @@ class Transcriber:
             total_duration = len(audio_data) / 16000.0
             logger.info(f"File audio: {len(audio_data)} samples ({total_duration:.1f}s)")
 
-            # Transcribe in 120-second chunks for quality + streaming
+            # Transcribe in 120-second chunks for progress reporting
             chunk_seconds = 120
             chunk_samples = chunk_seconds * 16000
             all_segments = []
@@ -308,16 +286,34 @@ class Transcriber:
                         f"of {total_duration:.0f}s)"
                     )
 
-                segments = self.transcribe_audio(chunk)
+                # Use faster-whisper with built-in VAD for file transcription
+                options = {
+                    "beam_size": 1,
+                    "temperature": 0.0,
+                    "no_speech_threshold": 0.6,
+                    "compression_ratio_threshold": 2.4,
+                    "vad_filter": True,  # built-in Silero VAD
+                }
+                if self.language:
+                    options["language"] = self.language
 
-                for seg in segments:
-                    seg['start'] += chunk_start_sec
-                    seg['end'] += chunk_start_sec
-                    all_segments.append(seg)
+                segments_gen, _info = self.model.transcribe(chunk, **options)
+
+                for seg in segments_gen:
+                    text = seg.text.strip()
+                    if not text:
+                        continue
+                    segment_dict = {
+                        "start": seg.start + chunk_start_sec,
+                        "end": seg.end + chunk_start_sec,
+                        "text": text,
+                    }
+                    all_segments.append(segment_dict)
 
                     if progress_callback:
                         progress_callback(
-                            f"__segment__{seg['start']:.2f}|{seg['end']:.2f}|{seg['text']}"
+                            f"__segment__{segment_dict['start']:.2f}|"
+                            f"{segment_dict['end']:.2f}|{segment_dict['text']}"
                         )
 
             if progress_callback:

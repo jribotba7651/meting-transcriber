@@ -34,6 +34,7 @@ def load_config():
         "whisper_model": "base",
         "language": "auto",
         "device": "auto",
+        "compute_type": "auto",
         "window_opacity": 0.95,
         "always_on_top": True,
         "buffer_duration": 10
@@ -86,7 +87,8 @@ def main():
     transcriber = Transcriber(
         model_size=config['whisper_model'],
         device=config['device'],
-        language=config['language']
+        language=config['language'],
+        compute_type=config.get('compute_type', 'auto'),
     )
 
     # --- AI Assistant disabled for now (uncomment to re-enable) ---

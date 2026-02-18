@@ -118,49 +118,47 @@ except Exception as e:
     pa.terminate()
     sys.exit(1)
 
-# Stage 5: Test Whisper transcription
-print(f"\n[STAGE 5] Testing Whisper transcription...")
+# Stage 5: Test faster-whisper transcription
+print(f"\n[STAGE 5] Testing faster-whisper transcription...")
 try:
-    import whisper
-    print(f"  Loading model 'base' on cpu...")
-    model = whisper.load_model("base", device="cpu")
+    from faster_whisper import WhisperModel
+    print(f"  Loading model 'base' on cpu (int8)...")
+    model = WhisperModel("base", device="cpu", compute_type="int8")
     print(f"  Model loaded. Transcribing {len(resampled)/16000:.1f}s of audio...")
-    
-    result = model.transcribe(
+
+    segments_gen, info = model.transcribe(
         resampled,
         language=None,  # auto-detect
-        verbose=False,
-        condition_on_previous_text=False,
+        vad_filter=True,
         no_speech_threshold=0.6,
     )
-    
-    segments = result.get('segments', [])
-    detected_lang = result.get('language', 'unknown')
+
+    segments = list(segments_gen)
+    detected_lang = info.language
     print(f"  Detected language: {detected_lang}")
     print(f"  Segments: {len(segments)}")
-    
+
     if segments:
         for seg in segments:
-            print(f"    [{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text'].strip()}")
+            print(f"    [{seg.start:.1f}s - {seg.end:.1f}s] {seg.text.strip()}")
     else:
         print(f"  WARNING: No segments produced!")
         print(f"  This could mean:")
         print(f"    - Audio was too quiet (RMS={rms_resampled:.6f})")
         print(f"    - no_speech_threshold filtered everything out")
         print(f"    - No intelligible speech in the audio")
-        
+
         # Try again without no_speech_threshold
         print(f"\n  Retrying WITHOUT no_speech_threshold filter...")
-        result2 = model.transcribe(
+        segments_gen2, info2 = model.transcribe(
             resampled,
             language=None,
-            verbose=False,
-            condition_on_previous_text=False,
+            vad_filter=False,
         )
-        segments2 = result2.get('segments', [])
+        segments2 = list(segments_gen2)
         print(f"  Segments (no filter): {len(segments2)}")
         for seg in segments2:
-            print(f"    [{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text'].strip()}")
+            print(f"    [{seg.start:.1f}s - {seg.end:.1f}s] {seg.text.strip()}")
 
 except Exception as e:
     print(f"  ERROR: {e}")

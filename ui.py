@@ -129,22 +129,13 @@ class TranscriberUI:
         )
         self.upload_btn.grid(row=0, column=0, padx=(0, 5))
 
-        # Live transcription button
-        self.live_btn = ttk.Button(
-            action_frame,
-            text="\U0001f534 Start Live Transcription",
-            command=self._toggle_live_transcription,
-            width=28
-        )
-        self.live_btn.grid(row=0, column=1, padx=(0, 10))
-
         # --- Status Frame ---
         status_frame = ttk.Frame(main_frame)
         status_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
         status_frame.columnconfigure(0, weight=1)
 
         # Status label
-        self.status_var = tk.StringVar(value="Ready \u2014 Upload a file or start live transcription")
+        self.status_var = tk.StringVar(value="Ready \u2014 Upload a file to transcribe")
         self.status_label = ttk.Label(
             status_frame,
             textvariable=self.status_var,
@@ -186,6 +177,10 @@ class TranscriberUI:
         # Clear button
         clear_btn = ttk.Button(button_frame, text="Clear", command=self._clear_transcription)
         clear_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        # Copy button
+        copy_btn = ttk.Button(button_frame, text="Copy", command=self._copy_transcription)
+        copy_btn.pack(side=tk.LEFT, padx=(0, 5))
 
         # Save button
         save_btn = ttk.Button(button_frame, text="Save", command=self._save_transcription)
@@ -296,7 +291,7 @@ class TranscriberUI:
 
             if not self.transcriber.load_model():
                 messagebox.showerror("Error", "Failed to load Whisper model")
-                self._update_status("Ready \u2014 Upload a file or start live transcription")
+                self._update_status("Ready \u2014 Upload a file to transcribe")
                 return
 
         # Define transcription callback (called from transcription worker thread)
@@ -350,7 +345,7 @@ class TranscriberUI:
             self.live_start_time = None
             messagebox.showerror("Error", "Failed to start audio capture.\n\n"
                                  "Try selecting a different audio device.")
-            self._update_status("Ready \u2014 Upload a file or start live transcription")
+            self._update_status("Ready \u2014 Upload a file to transcribe")
             return
 
         # Update UI
@@ -470,6 +465,16 @@ class TranscriberUI:
         except Exception as e:
             print(f"[Transcript export] Error clearing: {e}")
 
+    def _copy_transcription(self):
+        """Copy all transcription text to clipboard"""
+        text = self.text_area.get(1.0, tk.END).strip()
+        if not text:
+            messagebox.showinfo("Info", "No transcription to copy")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self._update_status("Copied to clipboard")
+
     def _clear_transcription(self):
         """Clear the transcription"""
         if messagebox.askyesno("Confirm", "Clear all transcription?"):
@@ -497,10 +502,6 @@ class TranscriberUI:
 
     def _upload_video(self):
         """Upload and transcribe a video/audio file"""
-        if self.is_live_transcribing:
-            messagebox.showinfo("Info", "Stop live transcription before uploading a file.")
-            return
-
         file_path = filedialog.askopenfilename(
             title="Select Video or Audio File",
             filetypes=[
@@ -525,12 +526,11 @@ class TranscriberUI:
 
             if not self.transcriber.load_model():
                 messagebox.showerror("Error", "Failed to load Whisper model")
-                self._update_status("Ready \u2014 Upload a file or start live transcription")
+                self._update_status("Ready \u2014 Upload a file to transcribe")
                 return
 
         # Disable buttons during processing
         self.upload_btn.config(state='disabled')
-        self.live_btn.config(state='disabled')
 
         # Show progress bar
         self.progress_bar['value'] = 0
@@ -586,14 +586,13 @@ class TranscriberUI:
                 elif error_msg:
                     messagebox.showerror("Transcription Error",
                                          f"Failed to transcribe {filename}:\n\n{error_msg}")
-                    self._update_status("Ready \u2014 Upload a file or start live transcription")
+                    self._update_status("Ready \u2014 Upload a file to transcribe")
                 else:
                     messagebox.showwarning("Warning", "No transcription segments were generated.\n\n"
                                            "Check the terminal for more details.")
-                    self._update_status("Ready \u2014 Upload a file or start live transcription")
+                    self._update_status("Ready \u2014 Upload a file to transcribe")
 
                 self.upload_btn.config(state='normal')
-                self.live_btn.config(state='normal')
 
             self.root.after(0, show_results)
 
