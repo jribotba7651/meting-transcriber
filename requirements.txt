@@ -1,4 +1,4 @@
-faster-whisper==1.0.3
+openai-whisper
 numpy==1.24.3
 moviepy==1.0.3
 pyinstaller==6.3.0
